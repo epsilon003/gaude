@@ -1,0 +1,14 @@
+# --- Core RAG pipeline ---
+langchain-text-splitters>=0.3.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
+# --- LLM generation (Gemini + OpenRouter, both OpenAI-compatible) ---
+openai>=1.40.0
+
+# --- App / infra ---
+streamlit>=1.37.0
+python-dotenv>=1.0.1
+
+# --- CLI ingestion / utils ---
+tqdm>=4.66.0

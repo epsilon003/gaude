@@ -1,0 +1,47 @@
+"""
+Local cross-encoder reranking.
+
+Vector similarity search gets you "semantically close" candidates fast, but
+cross-encoders score (query, chunk) pairs jointly and are meaningfully better
+at judging actual relevance. We over-fetch from the vector store (top_k_retrieve)
+and rerank down to a smaller, higher-precision set (top_k_final) before it goes
+into the LLM prompt. Fully local, no API cost.
+"""
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+
+from sentence_transformers import CrossEncoder
+
+DEFAULT_RERANKER_MODEL = os.environ.get(
+    "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+)
+
+
+class Reranker:
+    def __init__(self, model_name: str = DEFAULT_RERANKER_MODEL):
+        self.model = CrossEncoder(model_name)
+
+    def rerank(self, query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
+        """
+        candidates: list of dicts each containing at least a "text" key.
+        Returns the top_k candidates sorted by cross-encoder relevance score,
+        with a "rerank_score" field added.
+        """
+        if not candidates:
+            return []
+
+        pairs = [(query, c["text"]) for c in candidates]
+        scores = self.model.predict(pairs)
+
+        for c, s in zip(candidates, scores):
+            c["rerank_score"] = float(s)
+
+        candidates.sort(key=lambda c: c["rerank_score"], reverse=True)
+        return candidates[:top_k]
+
+
+@lru_cache(maxsize=1)
+def get_reranker() -> Reranker:
+    return Reranker()
