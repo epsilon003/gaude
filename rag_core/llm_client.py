@@ -16,6 +16,7 @@ surfacing an error straight to the user (PRD FR-7 / NFR-1 reliability).
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -23,10 +24,26 @@ from openai import OpenAI
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-DEFAULT_OPENROUTER_MODEL = os.environ.get(
-    "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"
-)
+# Free-tier model IDs rotate — Gemini deprecates/renames on a schedule, and
+# OpenRouter's specific free-model lineup changes on the order of days as
+# providers add/pull sponsorship (we've now seen two different pinned free
+# slugs get pulled within a couple weeks of each other). If you see a 404
+# like "no longer available" or "unavailable for free", check
+# https://ai.google.dev/gemini-api/docs/models and
+# https://openrouter.ai/models?order=pricing-low-to-high and update these env
+# vars (or the .env file) rather than editing code.
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+# Deliberately no hardcoded default here: pinned free slugs keep getting
+# pulled, so unless you explicitly set OPENROUTER_MODEL, we skip straight to
+# the auto-router tier below, which self-heals as the free lineup changes.
+EXPLICIT_OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL")
+OPENROUTER_AUTO_FREE_MODEL = "openrouter/free"
+
+# Transient errors (rate limits, momentary overload) are worth a quick retry
+# on the SAME provider before burning a fallback tier on them.
+RETRYABLE_STATUS_CODES = {429, 503}
+MAX_RETRIES_PER_PROVIDER = 2
+RETRY_BACKOFF_SECONDS = 2
 
 SYSTEM_PROMPT = """You are a grounded Q&A assistant for a codebase. Answer ONLY using \
 the provided context chunks (retrieved code/documentation snippets). Every claim you \
@@ -72,11 +89,23 @@ class LLMClient:
 
         openrouter_key = os.environ.get("OPENROUTER_API_KEY")
         if openrouter_key:
+            openrouter_client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_key)
+            if EXPLICIT_OPENROUTER_MODEL:
+                self._providers.append(
+                    _Provider(
+                        name="openrouter",
+                        client=openrouter_client,
+                        model=EXPLICIT_OPENROUTER_MODEL,
+                    )
+                )
+            # Always present when a key exists: the auto-router picks whatever
+            # free model is actually alive right now, so this tier keeps
+            # working even as the free lineup changes underneath us.
             self._providers.append(
                 _Provider(
-                    name="openrouter",
-                    client=OpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_key),
-                    model=DEFAULT_OPENROUTER_MODEL,
+                    name="openrouter-auto",
+                    client=openrouter_client,
+                    model=OPENROUTER_AUTO_FREE_MODEL,
                 )
             )
 
@@ -95,21 +124,27 @@ class LLMClient:
     ) -> GenerationResult:
         errors = []
         for provider in self._providers:
-            try:
-                response = provider.client.chat.completions.create(
-                    model=provider.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                answer = response.choices[0].message.content
-                return GenerationResult(answer=answer, provider=provider.name, model=provider.model)
-            except Exception as exc:  # noqa: BLE001 - deliberately broad: any provider failure should fail over
-                errors.append(f"{provider.name} ({provider.model}): {exc}")
-                continue
+            for attempt in range(1, MAX_RETRIES_PER_PROVIDER + 1):
+                try:
+                    response = provider.client.chat.completions.create(
+                        model=provider.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    answer = response.choices[0].message.content
+                    return GenerationResult(answer=answer, provider=provider.name, model=provider.model)
+                except Exception as exc:  # noqa: BLE001 - deliberately broad: any provider failure should fail over
+                    status_code = getattr(exc, "status_code", None)
+                    is_retryable = status_code in RETRYABLE_STATUS_CODES
+                    if is_retryable and attempt < MAX_RETRIES_PER_PROVIDER:
+                        time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                        continue
+                    errors.append(f"{provider.name} ({provider.model}): {exc}")
+                    break
 
         raise RuntimeError(
             "All configured LLM providers failed.\n" + "\n".join(errors)
