@@ -12,8 +12,6 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from sentence_transformers import CrossEncoder
-
 DEFAULT_RERANKER_MODEL = os.environ.get(
     "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
 )
@@ -21,6 +19,7 @@ DEFAULT_RERANKER_MODEL = os.environ.get(
 
 class Reranker:
     def __init__(self, model_name: str = DEFAULT_RERANKER_MODEL):
+        from sentence_transformers import CrossEncoder 
         self.model = CrossEncoder(model_name)
 
     def rerank(self, query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
