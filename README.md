@@ -1,14 +1,3 @@
----
-title: Grounded Codebase QA
-emoji: 🔍
-colorFrom: blue
-colorTo: indigo
-sdk: streamlit
-sdk_version: "1.37.0"
-app_file: app.py
-pinned: false
----
-
 # Grounded Q&A System for Internal Codebases (RAG) MVP
 
 Ask natural-language questions about a public GitHub repository and get answers
@@ -118,10 +107,6 @@ semantic retrieval + reranking, grounded answer generation, file/line citations.
 
 **Out of scope (per PRD):** private repos, multiple repos queried simultaneously,
 control/data-flow analysis, code generation/modification, real-time re-ingestion.
-
-## Contribution
-
-Developed by a team of two 3rd-year CS students. Contributions and feedback welcome.
 
 ## License
 
