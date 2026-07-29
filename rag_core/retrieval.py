@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from rag_core.llm_client import LLMClient, build_user_prompt
 from rag_core.reranker import get_reranker
-from rag_core.vector_store import VectorStore
+from rag_core.vector_store import get_vector_store
 
 TOP_K_RETRIEVE = 15  # cast a wide net from the vector store
 TOP_K_FINAL = 5  # narrow down after reranking to keep the prompt tight
@@ -38,7 +38,7 @@ def answer_question(
     top_k_retrieve: int = TOP_K_RETRIEVE,
     top_k_final: int = TOP_K_FINAL,
 ) -> AnswerResult:
-    store = VectorStore()
+    store = get_vector_store()
     candidates = store.query(collection_name, question, top_k=top_k_retrieve)
 
     if not candidates:
