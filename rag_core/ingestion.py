@@ -16,7 +16,7 @@ from rag_core.chunking import (
     chunk_file,
     should_ingest_file,
 )
-from rag_core.vector_store import VectorStore, repo_url_to_collection_name
+from rag_core.vector_store import get_vector_store, repo_url_to_collection_name
 
 ProgressCallback = Callable[[str], None]
 
@@ -96,11 +96,11 @@ def ingest_repository(repo_url: str, progress: ProgressCallback | None = None) -
             )
 
         _log(f"Embedding {len(chunks)} chunks locally (sentence-transformers)...")
-        store = VectorStore()
+        store = get_vector_store()
         # Fresh ingest of this repo: drop any previous collection with the same slug
         if collection_name in store.list_collections():
             store.delete_collection(collection_name)
-        added = store.add_chunks(collection_name, chunks)
+        added = store.add_chunks(collection_name, chunks, source_url=repo_url)
 
         _log(f"Stored {added} chunks in ChromaDB collection '{collection_name}'.")
 
