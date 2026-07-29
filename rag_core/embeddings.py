@@ -11,13 +11,12 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
-
 DEFAULT_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5")
 
 
 class EmbeddingModel:
     def __init__(self, model_name: str = DEFAULT_MODEL_NAME):
+        from sentence_transformers import SentenceTransformer
         self.model_name = model_name
         self.model = SentenceTransformer(model_name)
 
