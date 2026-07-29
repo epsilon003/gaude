@@ -49,6 +49,7 @@ EXTENSION_LANGUAGE_MAP: dict[str, Language] = {
     ".sol": Language.SOL,
 }
 
+
 # Extensions we bother ingesting at all. Keeps binary junk, lockfiles, etc. out
 # of the vector store.
 INGESTIBLE_EXTENSIONS = set(EXTENSION_LANGUAGE_MAP.keys()) | {
@@ -81,6 +82,12 @@ IGNORED_DIR_NAMES = {
     ".pytest_cache",
 }
 
+IGNORED_FILENAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+    "poetry.lock", "Pipfile.lock", "Cargo.lock", "composer.lock",
+    "Gemfile.lock", "go.sum", "mix.lock",
+}
+
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 150
 MAX_FILE_SIZE_BYTES = 500_000  # skip anything larger; almost certainly generated/binary
@@ -100,6 +107,8 @@ def should_ingest_file(path: str) -> bool:
     """Filter out directories we don't care about and non-text/oversized files."""
     parts = path.replace("\\", "/").split("/")
     if any(p in IGNORED_DIR_NAMES for p in parts):
+        return False
+    if parts[-1] in IGNORED_FILENAMES:
         return False
     ext = os.path.splitext(path)[1].lower()
     if ext not in INGESTIBLE_EXTENSIONS:
