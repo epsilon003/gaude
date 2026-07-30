@@ -13,7 +13,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from rag_core.ingestion import ingest_repository
-from rag_core.retrieval import answer_question
+from rag_core.retrieval import AnswerResult, answer_question_stream
 from rag_core.vector_store import get_vector_store
 
 load_dotenv()
@@ -288,14 +288,23 @@ if question:
             st.write(question)
 
         with st.chat_message("assistant"):
-            with st.spinner("Retrieving context and generating answer..."):
-                try:
-                    result = answer_question(selected_collection, question)
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Failed to answer: {exc}")
-                    result = None
+            try:
+                with st.spinner("Retrieving context..."):
+                    text_stream, handle = answer_question_stream(selected_collection, question)
+                full_answer = st.write_stream(text_stream)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Failed to answer: {exc}")
+                full_answer = None
+                handle = None
 
-            if result is not None:
-                st.write(result.answer)
+            if full_answer is not None:
+                if handle.error:
+                    st.error(handle.error)
+                result = AnswerResult(
+                    answer=full_answer,
+                    citations=handle.citations,
+                    provider=handle.provider or "unknown",
+                    model=handle.model or "unknown",
+                )
                 _render_citations(result)
                 st.session_state.history.append((question, result))
