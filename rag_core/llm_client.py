@@ -39,6 +39,13 @@ instead of guessing or using outside knowledge.
 the provided context.
 """
 
+CONDENSE_SYSTEM_PROMPT = """Given a conversation history and a follow-up question, \
+rewrite the follow-up as a fully standalone question that makes sense with no \
+knowledge of the conversation history. Preserve the original intent and phrasing \
+style exactly — do not add new claims or narrow/broaden the scope. If the follow-up \
+is already standalone, return it completely unchanged. Output ONLY the rewritten \
+question and nothing else — no preamble, no quotes, no explanation."""
+
 
 @dataclass
 class GenerationResult:
@@ -138,7 +145,41 @@ class LLMClient:
         raise RuntimeError(
             "All configured LLM providers failed.\n" + "\n".join(errors)
         )
+    def condense_query(self, question: str, history: list[tuple[str, str]]) -> str:
+        """
+        Rewrite a follow-up question into a standalone one using recent chat
+        history, so retrieval (which only sees the rewritten text) actually
+        finds relevant chunks for questions like "what about its error
+        handling?" that make no sense in isolation.
 
+        history: list of (question, answer) tuples, oldest first. Only the
+        last 3 turns are used to keep this cheap and fast.
+
+        Fails open: if this call errors for any reason (rate limit, network,
+        all providers down), returns the original question unchanged rather
+        than blocking the whole pipeline on a non-essential step.
+        """
+        if not history:
+            return question
+
+        recent = history[-3:]
+        history_text = "\n\n".join(f"Q: {q}\nA: {a}" for q, a in recent)
+        prompt = (
+            f"Conversation history:\n{history_text}\n\n"
+            f"Follow-up question: {question}\n\nStandalone question:"
+        )
+        try:
+            result = self.generate(
+                user_prompt=prompt,
+                system_prompt=CONDENSE_SYSTEM_PROMPT,
+                max_tokens=150,
+                temperature=0.0,
+            )
+            condensed = (result.answer or "").strip().strip('"')
+            return condensed if condensed else question
+        except Exception:  # noqa: BLE001
+            return question
+        
     def generate_stream(
         self,
         user_prompt: str,
