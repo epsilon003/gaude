@@ -1,14 +1,6 @@
 """
 LLM generation client — free-tier only, with automatic failover.
 
-Primary: Google AI Studio (Gemini), via its OpenAI-compatible endpoint.
-Fallback: OpenRouter's free-tier models (":free" suffix models, no cost).
-
-Both providers speak the OpenAI chat-completions API, so we use the `openai`
-SDK for both and just swap base_url/api_key/model. This makes it trivial to
-add a third provider (Groq, Cerebras, etc.) later — just add another tier to
-the `_PROVIDERS` list.
-
 Free tiers get rate-limited or occasionally deprecate models without warning,
 so every call falls through to the next provider on failure rather than
 surfacing an error straight to the user (PRD FR-7 / NFR-1 reliability).
@@ -17,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterator 
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -24,23 +17,11 @@ from openai import OpenAI
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Free-tier model IDs rotate — Gemini deprecates/renames on a schedule, and
-# OpenRouter's specific free-model lineup changes on the order of days as
-# providers add/pull sponsorship (we've now seen two different pinned free
-# slugs get pulled within a couple weeks of each other). If you see a 404
-# like "no longer available" or "unavailable for free", check
-# https://ai.google.dev/gemini-api/docs/models and
-# https://openrouter.ai/models?order=pricing-low-to-high and update these env
-# vars (or the .env file) rather than editing code.
 DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
-# Deliberately no hardcoded default here: pinned free slugs keep getting
-# pulled, so unless you explicitly set OPENROUTER_MODEL, we skip straight to
-# the auto-router tier below, which self-heals as the free lineup changes.
 EXPLICIT_OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL")
 OPENROUTER_AUTO_FREE_MODEL = "openrouter/free"
 
-# Transient errors (rate limits, momentary overload) are worth a quick retry
-# on the SAME provider before burning a fallback tier on them.
+# Transient errors (rate limits, momentary overload) are worth a quick retry on the SAME provider before burning a fallback tier on them.
 RETRYABLE_STATUS_CODES = {429, 503}
 MAX_RETRIES_PER_PROVIDER = 2
 RETRY_BACKOFF_SECONDS = 2
@@ -65,6 +46,14 @@ class GenerationResult:
     provider: str
     model: str
 
+@dataclass
+class GenerationHandle:
+    """Mutable sidecar for streaming generation: which provider/model ended up
+    answering, and any terminal error — populated once the stream from
+    generate_stream() is fully consumed."""
+    provider: str | None = None
+    model: str | None = None
+    error: str | None = None
 
 @dataclass
 class _Provider:
@@ -150,6 +139,63 @@ class LLMClient:
             "All configured LLM providers failed.\n" + "\n".join(errors)
         )
 
+    def generate_stream(
+        self,
+        user_prompt: str,
+        system_prompt: str = SYSTEM_PROMPT,
+        max_tokens: int = 1000,
+        temperature: float = 0.2,
+    ) -> tuple[Iterator[str], GenerationHandle]:
+        handle = GenerationHandle()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        def _generator() -> Iterator[str]:
+            errors = []
+            for provider in self._providers:
+                for attempt in range(1, MAX_RETRIES_PER_PROVIDER + 1):
+                    try:
+                        stream = provider.client.chat.completions.create(
+                            model=provider.model,
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            stream=True,
+                        )
+                        # Pulling the first chunk here (still inside the try)
+                        # is what actually fires the HTTP request and surfaces
+                        # provider-level errors (bad model, rate limit, etc.)
+                        # before we've shown the user anything.
+                        first_chunk = next(stream, None)
+                    except Exception as exc:  # noqa: BLE001
+                        status_code = getattr(exc, "status_code", None)
+                        is_retryable = status_code in RETRYABLE_STATUS_CODES
+                        if is_retryable and attempt < MAX_RETRIES_PER_PROVIDER:
+                            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                            continue
+                        errors.append(f"{provider.name} ({provider.model}): {exc}")
+                        break
+
+                    handle.provider = provider.name
+                    handle.model = provider.model
+
+                    if first_chunk is not None and first_chunk.choices:
+                        delta = getattr(first_chunk.choices[0].delta, "content", None)
+                        if delta:
+                            yield delta                
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = getattr(chunk.choices[0].delta, "content", None)
+                        if delta:
+                            yield delta
+                    return
+
+            handle.error = "All configured LLM providers failed.\n" + "\n".join(errors)
+
+        return _generator(), handle
 
 def build_context_block(chunks: list[dict]) -> str:
     """Turn retrieved/reranked chunks into a numbered context block for the prompt,
