@@ -33,6 +33,21 @@ def clone_repo(repo_url: str, dest_dir: str) -> None:
     if result.returncode != 0:
         raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
 
+def get_commit_sha(repo_dir: str) -> str | None:
+    """SHA of the commit that was actually cloned, used to build permalink
+    citations (github.com/.../blob/<sha>/path#L..) that stay valid even if
+    the repo's default branch moves on after ingestion. Returns None rather
+    than raising — a missing SHA shouldn't break ingestion, citations just
+    fall back to file:line text instead of a clickable link."""
+    result = subprocess.run(
+        ["git", "-C", repo_dir, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 def iter_ingestible_files(root_dir: str):
     for dirpath, dirnames, filenames in os.walk(root_dir):
@@ -85,6 +100,7 @@ def ingest_repository(repo_url: str, progress: ProgressCallback | None = None) -
     with tempfile.TemporaryDirectory() as tmp_dir:
         _log(f"Cloning {repo_url} ...")
         clone_repo(repo_url, tmp_dir)
+        commit_sha = get_commit_sha(tmp_dir)
 
         _log("Chunking repository (language-aware splitting)...")
         chunks = build_chunks_for_repo(tmp_dir, progress=_log)
@@ -100,7 +116,7 @@ def ingest_repository(repo_url: str, progress: ProgressCallback | None = None) -
         # Fresh ingest of this repo: drop any previous collection with the same slug
         if collection_name in store.list_collections():
             store.delete_collection(collection_name)
-        added = store.add_chunks(collection_name, chunks, source_url=repo_url)
+        added = store.add_chunks(collection_name, chunks, source_url=repo_url, commit_sha=commit_sha)
 
         _log(f"Stored {added} chunks in ChromaDB collection '{collection_name}'.")
 
