@@ -7,6 +7,7 @@ Two panes:
 
 This file is UI/presentation only — all RAG logic lives in rag_core/.
 """
+import os
 import time
 
 import streamlit as st
@@ -54,20 +55,16 @@ st.markdown(
     .repo-card .repo-meta { opacity: 0.6; font-size: 0.75rem; margin-top: 0.15rem; }
 
     /* Citation pills */
-    .citation-pill {
-        display: inline-flex; align-items: center; gap: 0.35rem;
-        border: 1px solid rgba(128,128,128,0.3); border-radius: 999px;
-        padding: 0.15rem 0.65rem; margin: 0.15rem 0.3rem 0.15rem 0;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.78rem; background: rgba(128,128,128,0.08);
-    }
-    .citation-pill .score { opacity: 0.55; font-family: inherit; }
-
-    .provider-badge {
+    .provider-badge, .confidence-badge {
         display: inline-block; font-size: 0.72rem; font-weight: 600;
-        padding: 0.1rem 0.55rem; border-radius: 999px;
-        background: rgba(46,204,113,0.15); color: #1e8449; margin-bottom: 0.6rem;
+        padding: 0.1rem 0.55rem; border-radius: 999px; margin-bottom: 0.6rem;
+        margin-right: 0.3rem;
     }
+    .provider-badge { background: rgba(46,204,113,0.15); color: #1e8449; }
+
+    .resolved-question { opacity: 0.6; font-size: 0.8rem; font-style: italic; margin-bottom: 0.4rem; }
+
+    .citation-preview-link { font-size: 0.78rem; }
 
     /* Ingestion stepper */
     .stepper { display: flex; gap: 0.4rem; margin: 0.6rem 0 0.5rem 0; }
@@ -259,19 +256,57 @@ if not st.session_state.history:
 
 question = st.chat_input("Ask a question about the selected repo...")
 
+_LANGUAGE_MAP = {
+    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
+    ".ts": "typescript", ".tsx": "typescript", ".java": "java", ".go": "go",
+    ".rb": "ruby", ".php": "php", ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".h": "c",
+    ".hpp": "cpp", ".cs": "csharp", ".rs": "rust", ".kt": "kotlin", ".scala": "scala",
+    ".swift": "swift", ".md": "markdown", ".html": "html", ".htm": "html",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".sh": "bash", ".sql": "sql",
+    ".toml": "toml",
+}
+
+_CONFIDENCE_STYLES = {
+    "Strong": ("#1e8449", "rgba(46,204,113,0.15)"),
+    "Moderate": ("#9a7d0a", "rgba(241,196,15,0.18)"),
+    "Weak": ("#943126", "rgba(231,76,60,0.15)"),
+    "None": ("#666666", "rgba(128,128,128,0.15)"),
+}
+
+
+def _guess_language(file_path: str) -> str | None:
+    ext = os.path.splitext(file_path)[1].lower()
+    return _LANGUAGE_MAP.get(ext)
+
 
 def _render_citations(result) -> None:
     if not result.citations:
         return
-    st.markdown(f'<span class="provider-badge">{result.provider} · {result.model}</span>', unsafe_allow_html=True)
-    with st.expander(f"Sources ({len(result.citations)})", expanded=False):
-        pills = "".join(
-            f'<span class="citation-pill">{c.file_path}:{c.start_line}-{c.end_line} '
-            f'<span class="score">{c.rerank_score:.2f}</span></span>'
-            for c in result.citations
-        )
-        st.markdown(pills, unsafe_allow_html=True)
 
+    badges = f'<span class="provider-badge">{result.provider} · {result.model}</span>'
+    label = getattr(result, "confidence_label", "N/A")
+    if label != "N/A":
+        color, bg = _CONFIDENCE_STYLES.get(label, _CONFIDENCE_STYLES["None"])
+        badges += (
+            f'<span class="confidence-badge" style="color:{color};background:{bg};">'
+            f"Grounding: {label}</span>"
+        )
+    st.markdown(badges, unsafe_allow_html=True)
+
+    resolved_question = getattr(result, "resolved_question", None)
+    if resolved_question:
+        st.markdown(
+            f'<div class="resolved-question">Interpreted as: "{resolved_question}"</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.caption(f"Sources ({len(result.citations)})")
+    for c in result.citations:
+        header = f"{c.file_path}:{c.start_line}-{c.end_line}  ·  relevance {c.rerank_score:.2f}"
+        with st.expander(header, expanded=False):
+            if c.github_url:
+                st.markdown(f'<a class="citation-preview-link" href="{c.github_url}" target="_blank">View on GitHub ↗</a>', unsafe_allow_html=True)
+            st.code(c.text or "(no preview available)", language=_guess_language(c.file_path))
 
 for past_question, result in st.session_state.history:
     with st.chat_message("user"):
@@ -289,8 +324,11 @@ if question:
 
         with st.chat_message("assistant"):
             try:
+                chat_history = [(q, r.answer) for q, r in st.session_state.history]
                 with st.spinner("Retrieving context..."):
-                    text_stream, handle = answer_question_stream(selected_collection, question)
+                    text_stream, handle = answer_question_stream(
+                        selected_collection, question, chat_history=chat_history
+                    )
                 full_answer = st.write_stream(text_stream)
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to answer: {exc}")
@@ -305,6 +343,9 @@ if question:
                     citations=handle.citations,
                     provider=handle.provider or "unknown",
                     model=handle.model or "unknown",
+                    confidence=handle.confidence,
+                    confidence_label=handle.confidence_label,
+                    resolved_question=handle.resolved_question,
                 )
                 _render_citations(result)
                 st.session_state.history.append((question, result))
