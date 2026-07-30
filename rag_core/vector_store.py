@@ -36,11 +36,24 @@ class VectorStore:
             path=persist_dir, settings=Settings(anonymized_telemetry=False)
         )
 
-    def get_or_create_collection(self, name: str, source_url: str | None = None):
+    def get_or_create_collection(
+        self, name: str, source_url: str | None = None, commit_sha: str | None = None
+    ):
         metadata = {"hnsw:space": "cosine"}
         if source_url:
             metadata["source_url"] = source_url
+        if commit_sha:
+            metadata["commit_sha"] = commit_sha
         return self.client.get_or_create_collection(name=name, metadata=metadata)
+
+    def get_collection_metadata(self, collection_name: str) -> dict:
+        """source_url / commit_sha for a collection, or {} if unknown (e.g.
+        collections ingested before this metadata existed)."""
+        try:
+            collection = self.client.get_collection(name=collection_name)
+        except Exception:  # noqa: BLE001
+            return {}
+        return dict(collection.metadata or {})
 
     def list_collections(self) -> list[str]:
         return [c.name for c in self.client.list_collections()]
@@ -65,9 +78,18 @@ class VectorStore:
     def delete_collection(self, name: str) -> None:
         self.client.delete_collection(name=name)
 
-    def add_chunks(self, collection_name: str, chunks: list, source_url: str | None = None, batch_size: int = 64) -> int:
+    def add_chunks(
+        self,
+        collection_name: str,
+        chunks: list,
+        source_url: str | None = None,
+        commit_sha: str | None = None,
+        batch_size: int = 64,
+    ) -> int:
         """chunks: list of rag_core.chunking.CodeChunk"""
-        collection = self.get_or_create_collection(collection_name, source_url=source_url)
+        collection = self.get_or_create_collection(
+            collection_name, source_url=source_url, commit_sha=commit_sha
+        )
         embedder = get_embedding_model()
 
         total_added = 0
