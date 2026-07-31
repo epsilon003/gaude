@@ -83,7 +83,7 @@ infra.
    ```
    Open the local URL Streamlit prints (default `http://localhost:8501`).
    Ingest a repo from the sidebar, or pick one you already ingested via the CLI,
-   then ask questions in the chat box. Answers stream in; expand a citation to
+   then ask questions in the chat box. Answers stream in. Expand a citation to
    see the actual code and jump to it on GitHub.
 
 ## Usage
