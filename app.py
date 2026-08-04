@@ -7,8 +7,10 @@ Two panes:
 
 This file is UI/presentation only — all RAG logic lives in rag_core/.
 """
+import logging
 import os
 import time
+import traceback
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -18,98 +20,17 @@ from rag_core.retrieval import AnswerResult, answer_question_stream
 from rag_core.vector_store import get_vector_store
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# st.set_page_config must be the first Streamlit command in the script, so
+# it stays outside main()/the top-level error handler below.
 st.set_page_config(
     page_title="Codebase Q&A (RAG)",
-    page_icon="🔍",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ---------------------------------------------------------------------------
-# Styling
-# ---------------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    /* Tighten Streamlit's default top padding so the header sits higher */
-    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 900px; }
-
-    /* Hero header */
-    .rag-hero { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.1rem; }
-    .rag-hero h1 { font-size: 1.7rem; margin: 0; font-weight: 700; }
-    .rag-subtitle { opacity: 0.65; font-size: 0.95rem; margin-bottom: 1.4rem; }
-
-    /* Sidebar section headers */
-    .sidebar-section-label {
-        font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
-        text-transform: uppercase; opacity: 0.55; margin: 1.1rem 0 0.5rem 0;
-    }
-
-    /* Repo card in sidebar (selected + list) */
-    .repo-card {
-        border: 1px solid rgba(128,128,128,0.25); border-radius: 10px;
-        padding: 0.55rem 0.75rem; margin-bottom: 0.4rem; font-size: 0.85rem;
-    }
-    .repo-card .repo-name { font-weight: 600; }
-    .repo-card .repo-meta { opacity: 0.6; font-size: 0.75rem; margin-top: 0.15rem; }
-
-    /* Citation pills */
-    .provider-badge, .confidence-badge {
-        display: inline-block; font-size: 0.72rem; font-weight: 600;
-        padding: 0.1rem 0.55rem; border-radius: 999px; margin-bottom: 0.6rem;
-        margin-right: 0.3rem;
-    }
-    .provider-badge { background: rgba(46,204,113,0.15); color: #1e8449; }
-
-    .resolved-question { opacity: 0.6; font-size: 0.8rem; font-style: italic; margin-bottom: 0.4rem; }
-
-    .citation-preview-link { font-size: 0.78rem; }
-
-    /* Ingestion stepper */
-    .stepper { display: flex; gap: 0.4rem; margin: 0.6rem 0 0.5rem 0; }
-    .step {
-        flex: 1; text-align: center; font-size: 0.68rem; font-weight: 600;
-        padding: 0.35rem 0.2rem; border-radius: 6px; opacity: 0.4;
-        background: rgba(128,128,128,0.12); transition: all 0.2s ease;
-    }
-    .step.active { opacity: 1; background: rgba(52,152,219,0.2); color: #2471a3; }
-    .step.done { opacity: 0.85; background: rgba(46,204,113,0.18); color: #1e8449; }
-
-    /* Empty state */
-    .empty-state {
-        text-align: center; padding: 3.5rem 1.5rem; opacity: 0.75;
-        border: 1px dashed rgba(128,128,128,0.3); border-radius: 14px; margin-top: 1rem;
-    }
-    .empty-state .emoji { font-size: 2.2rem; margin-bottom: 0.6rem; }
-    .empty-state .title { font-weight: 600; font-size: 1.05rem; margin-bottom: 0.3rem; }
-    .empty-state .desc { font-size: 0.88rem; opacity: 0.75; max-width: 420px; margin: 0 auto; }
-
-    .suggestion-chip {
-        display: inline-block; border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
-        padding: 0.3rem 0.7rem; margin: 0.2rem; font-size: 0.82rem; opacity: 0.85;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="rag-hero"><h1>🔍 Grounded Q&A for Internal Codebases</h1></div>
-    <div class="rag-subtitle">
-        Ask natural-language questions about a GitHub repo. Answers are grounded in
-        retrieved code/doc chunks with file + line citations — free-tier stack only.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-if "history" not in st.session_state:
-    st.session_state.history = []  # list of (question, AnswerResult)
 
 INGEST_STEPS = ["Clone", "Chunk", "Embed", "Store"]
 STEP_KEYWORDS = {
@@ -117,6 +38,23 @@ STEP_KEYWORDS = {
     "Chunk": ("chunking", "chunked", "done chunking"),
     "Embed": ("embedding",),
     "Store": ("stored",),
+}
+
+_LANGUAGE_MAP = {
+    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
+    ".ts": "typescript", ".tsx": "typescript", ".java": "java", ".go": "go",
+    ".rb": "ruby", ".php": "php", ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".h": "c",
+    ".hpp": "cpp", ".cs": "csharp", ".rs": "rust", ".kt": "kotlin", ".scala": "scala",
+    ".swift": "swift", ".md": "markdown", ".html": "html", ".htm": "html",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".sh": "bash", ".sql": "sql",
+    ".toml": "toml",
+}
+
+_CONFIDENCE_STYLES = {
+    "Strong": ("#1e8449", "rgba(46,204,113,0.15)"),
+    "Moderate": ("#9a7d0a", "rgba(241,196,15,0.18)"),
+    "Weak": ("#943126", "rgba(231,76,60,0.15)"),
+    "None": ("#666666", "rgba(128,128,128,0.15)"),
 }
 
 
@@ -143,137 +81,6 @@ def _render_stepper(current_index: int) -> str:
     return f'<div class="stepper">{"".join(cells)}</div>'
 
 
-# ---------------------------------------------------------------------------
-# Sidebar: ingestion + repo selection
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.markdown('<div class="sidebar-section-label">1 · Ingest a repository</div>', unsafe_allow_html=True)
-    repo_url = st.text_input(
-        "Public GitHub repo URL",
-        placeholder="https://github.com/owner/repo_name",
-        label_visibility="collapsed",
-    )
-    ingest_clicked = st.button("Ingest repo", type="primary", use_container_width=True)
-
-    if ingest_clicked:
-        if not repo_url.strip():
-            st.error("Enter a repo URL first.")
-        else:
-            stepper_box = st.empty()
-            status_box = st.empty()
-            log_lines: list[str] = []
-
-            def _progress(msg: str) -> None:
-                log_lines.append(msg)
-                stepper_box.markdown(_render_stepper(_current_step_index(log_lines)), unsafe_allow_html=True)
-                status_box.caption(msg)
-
-            stepper_box.markdown(_render_stepper(0), unsafe_allow_html=True)
-            status_box.caption("Starting...")
-            try:
-                start = time.time()
-                summary = ingest_repository(repo_url.strip(), progress=_progress)
-                elapsed = time.time() - start
-                stepper_box.markdown(_render_stepper(len(INGEST_STEPS)), unsafe_allow_html=True)
-                status_box.success(
-                    f"Ingested {summary['chunk_count']} chunks in {elapsed:.1f}s.", icon="✅"
-                )
-            except Exception as exc:  # noqa: BLE001
-                status_box.error(f"Ingestion failed: {exc}", icon="⚠️")
-
-    st.markdown('<div class="sidebar-section-label">2 · Choose repo to query</div>', unsafe_allow_html=True)
-    store = get_vector_store()
-    repo_infos = store.list_collections_with_info()
-
-    if not repo_infos:
-        st.caption("No repos ingested yet — add one above to get started.")
-        selected_collection = None
-    else:
-        options = {info["name"]: info for info in repo_infos}
-        selected_name = st.selectbox(
-            "Ingested repositories",
-            list(options.keys()),
-            format_func=lambda n: options[n]["display_name"],
-            label_visibility="collapsed",
-        )
-        selected_collection = selected_name
-        info = options[selected_name]
-        st.markdown(
-            f"""
-            <div class="repo-card">
-                <div class="repo-name">📦 {info['display_name']}</div>
-                <div class="repo-meta">{info['chunk_count']} chunks indexed</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown('<div class="sidebar-section-label">Stack</div>', unsafe_allow_html=True)
-    st.caption(
-        "sentence-transformers (embeddings) · ChromaDB (vector store) · "
-        "cross-encoder reranking · Gemini/OpenRouter (generation) — all free-tier."
-    )
-
-# ---------------------------------------------------------------------------
-# Main: Q&A
-# ---------------------------------------------------------------------------
-if not repo_infos:
-    st.markdown(
-        """
-        <div class="empty-state">
-            <div class="emoji">📂</div>
-            <div class="title">No repositories ingested yet</div>
-            <div class="desc">
-                Paste a public GitHub URL into the sidebar and click <b>Ingest repo</b>
-                to build a searchable knowledge base you can ask questions against.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.stop()
-
-if not st.session_state.history:
-    st.markdown(
-        f"""
-        <div class="empty-state">
-            <div class="emoji">💬</div>
-            <div class="title">Ask something about {options[selected_collection]['display_name']}</div>
-            <div class="desc">Try one of these to get started, or type your own question below.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    suggestions = [
-        "What does this repo do, at a high level?",
-        "Where is the main entry point?",
-        "How is authentication handled?",
-    ]
-    st.markdown(
-        "".join(f'<span class="suggestion-chip">{s}</span>' for s in suggestions),
-        unsafe_allow_html=True,
-    )
-
-question = st.chat_input("Ask a question about the selected repo...")
-
-_LANGUAGE_MAP = {
-    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript", ".java": "java", ".go": "go",
-    ".rb": "ruby", ".php": "php", ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".h": "c",
-    ".hpp": "cpp", ".cs": "csharp", ".rs": "rust", ".kt": "kotlin", ".scala": "scala",
-    ".swift": "swift", ".md": "markdown", ".html": "html", ".htm": "html",
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".sh": "bash", ".sql": "sql",
-    ".toml": "toml",
-}
-
-_CONFIDENCE_STYLES = {
-    "Strong": ("#1e8449", "rgba(46,204,113,0.15)"),
-    "Moderate": ("#9a7d0a", "rgba(241,196,15,0.18)"),
-    "Weak": ("#943126", "rgba(231,76,60,0.15)"),
-    "None": ("#666666", "rgba(128,128,128,0.15)"),
-}
-
-
 def _guess_language(file_path: str) -> str | None:
     ext = os.path.splitext(file_path)[1].lower()
     return _LANGUAGE_MAP.get(ext)
@@ -284,6 +91,9 @@ def _render_citations(result) -> None:
         return
 
     badges = f'<span class="provider-badge">{result.provider} · {result.model}</span>'
+    retrieval_seconds = getattr(result, "retrieval_seconds", 0.0)
+    if retrieval_seconds:
+        badges += f'<span class="timing-badge">Retrieved in {retrieval_seconds:.2f}s</span>'
     label = getattr(result, "confidence_label", "N/A")
     if label != "N/A":
         color, bg = _CONFIDENCE_STYLES.get(label, _CONFIDENCE_STYLES["None"])
@@ -305,47 +115,266 @@ def _render_citations(result) -> None:
         header = f"{c.file_path}:{c.start_line}-{c.end_line}  ·  relevance {c.rerank_score:.2f}"
         with st.expander(header, expanded=False):
             if c.github_url:
-                st.markdown(f'<a class="citation-preview-link" href="{c.github_url}" target="_blank">View on GitHub ↗</a>', unsafe_allow_html=True)
+                st.markdown(f'<a class="citation-preview-link" href="{c.github_url}" target="_blank">View on GitHub</a>', unsafe_allow_html=True)
             st.code(c.text or "(no preview available)", language=_guess_language(c.file_path))
 
-for past_question, result in st.session_state.history:
-    with st.chat_message("user"):
-        st.write(past_question)
-    with st.chat_message("assistant"):
-        st.write(result.answer)
-        _render_citations(result)
 
-if question:
-    if not selected_collection:
-        st.error("Select an ingested repo from the sidebar first.")
-    else:
-        with st.chat_message("user"):
-            st.write(question)
+def main() -> None:
+    # -----------------------------------------------------------------------
+    # Styling
+    # -----------------------------------------------------------------------
+    st.markdown(
+        """
+        <style>
+        /* Tighten Streamlit's default top padding so the header sits higher */
+        .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 900px; }
 
-        with st.chat_message("assistant"):
-            try:
-                chat_history = [(q, r.answer) for q, r in st.session_state.history]
-                with st.spinner("Retrieving context..."):
-                    text_stream, handle = answer_question_stream(
-                        selected_collection, question, chat_history=chat_history
+        /* Hero header */
+        .rag-hero { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.1rem; }
+        .rag-hero h1 { font-size: 1.7rem; margin: 0; font-weight: 700; }
+        .rag-subtitle { opacity: 0.65; font-size: 0.95rem; margin-bottom: 1.4rem; }
+
+        /* Sidebar section headers */
+        .sidebar-section-label {
+            font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; opacity: 0.55; margin: 1.1rem 0 0.5rem 0;
+        }
+
+        /* Repo card in sidebar (selected + list) */
+        .repo-card {
+            border: 1px solid rgba(128,128,128,0.25); border-radius: 10px;
+            padding: 0.55rem 0.75rem; margin-bottom: 0.4rem; font-size: 0.85rem;
+        }
+        .repo-card .repo-name { font-weight: 600; }
+        .repo-card .repo-meta { opacity: 0.6; font-size: 0.75rem; margin-top: 0.15rem; }
+
+        /* Confidence/provider badges */
+        .provider-badge, .confidence-badge, .timing-badge {
+            display: inline-block; font-size: 0.72rem; font-weight: 600;
+            padding: 0.1rem 0.55rem; border-radius: 999px; margin-bottom: 0.6rem;
+            margin-right: 0.3rem;
+        }
+        .provider-badge { background: rgba(46,204,113,0.15); color: #1e8449; }
+        .timing-badge { background: rgba(128,128,128,0.15); color: #5b637a; }
+
+        .resolved-question { opacity: 0.6; font-size: 0.8rem; font-style: italic; margin-bottom: 0.4rem; }
+
+        .citation-preview-link { font-size: 0.78rem; }
+
+        /* Ingestion stepper */
+        .stepper { display: flex; gap: 0.4rem; margin: 0.6rem 0 0.5rem 0; }
+        .step {
+            flex: 1; text-align: center; font-size: 0.68rem; font-weight: 600;
+            padding: 0.35rem 0.2rem; border-radius: 6px; opacity: 0.4;
+            background: rgba(128,128,128,0.12); transition: all 0.2s ease;
+        }
+        .step.active { opacity: 1; background: rgba(52,152,219,0.2); color: #2471a3; }
+        .step.done { opacity: 0.85; background: rgba(46,204,113,0.18); color: #1e8449; }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center; padding: 3.5rem 1.5rem; opacity: 0.75;
+            border: 1px dashed rgba(128,128,128,0.3); border-radius: 14px; margin-top: 1rem;
+        }
+        .empty-state .title { font-weight: 600; font-size: 1.1rem; margin-bottom: 0.4rem; }
+        .empty-state .desc { font-size: 0.88rem; opacity: 0.75; max-width: 420px; margin: 0 auto; }
+
+        .suggestion-chip {
+            display: inline-block; border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
+            padding: 0.3rem 0.7rem; margin: 0.2rem; font-size: 0.82rem; opacity: 0.85;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # -----------------------------------------------------------------------
+    # Header
+    # -----------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="rag-hero"><h1>Grounded Q&A for Internal Codebases</h1></div>
+        <div class="rag-subtitle">
+            Ask natural-language questions about a GitHub repo. Answers are grounded in
+            retrieved code/doc chunks with file + line citations — free-tier stack only.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if "history" not in st.session_state:
+        st.session_state.history = []  # list of (question, AnswerResult)
+
+    # -----------------------------------------------------------------------
+    # Sidebar: ingestion + repo selection
+    # -----------------------------------------------------------------------
+    with st.sidebar:
+        st.markdown('<div class="sidebar-section-label">1 · Ingest a repository</div>', unsafe_allow_html=True)
+        repo_url = st.text_input(
+            "Public GitHub repo URL",
+            placeholder="https://github.com/owner/repo_name",
+            label_visibility="collapsed",
+        )
+        ingest_clicked = st.button("Ingest repo", type="primary", use_container_width=True)
+
+        if ingest_clicked:
+            if not repo_url.strip():
+                st.error("Enter a repo URL first.")
+            else:
+                stepper_box = st.empty()
+                status_box = st.empty()
+                log_lines: list[str] = []
+
+                def _progress(msg: str) -> None:
+                    log_lines.append(msg)
+                    stepper_box.markdown(_render_stepper(_current_step_index(log_lines)), unsafe_allow_html=True)
+                    status_box.caption(msg)
+
+                stepper_box.markdown(_render_stepper(0), unsafe_allow_html=True)
+                status_box.caption("Starting...")
+                try:
+                    start = time.time()
+                    summary = ingest_repository(repo_url.strip(), progress=_progress)
+                    elapsed = time.time() - start
+                    stepper_box.markdown(_render_stepper(len(INGEST_STEPS)), unsafe_allow_html=True)
+                    status_box.success(
+                        f"Ingested {summary['chunk_count']} chunks in {elapsed:.1f}s."
                     )
-                full_answer = st.write_stream(text_stream)
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Failed to answer: {exc}")
-                full_answer = None
-                handle = None
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Ingestion failed for repo_url=%r", repo_url)
+                    status_box.error(f"Ingestion failed: {exc}")
 
-            if full_answer is not None:
-                if handle.error:
-                    st.error(handle.error)
-                result = AnswerResult(
-                    answer=full_answer,
-                    citations=handle.citations,
-                    provider=handle.provider or "unknown",
-                    model=handle.model or "unknown",
-                    confidence=handle.confidence,
-                    confidence_label=handle.confidence_label,
-                    resolved_question=handle.resolved_question,
-                )
-                _render_citations(result)
-                st.session_state.history.append((question, result))
+        st.markdown('<div class="sidebar-section-label">2 · Choose repo to query</div>', unsafe_allow_html=True)
+        store = get_vector_store()
+        repo_infos = store.list_collections_with_info()
+
+        if not repo_infos:
+            st.caption("No repos ingested yet — add one above to get started.")
+            selected_collection = None
+        else:
+            options = {info["name"]: info for info in repo_infos}
+            selected_name = st.selectbox(
+                "Ingested repositories",
+                list(options.keys()),
+                format_func=lambda n: options[n]["display_name"],
+                label_visibility="collapsed",
+            )
+            selected_collection = selected_name
+            info = options[selected_name]
+            st.markdown(
+                f"""
+                <div class="repo-card">
+                    <div class="repo-name">{info['display_name']}</div>
+                    <div class="repo-meta">{info['chunk_count']} chunks indexed</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown('<div class="sidebar-section-label">Stack</div>', unsafe_allow_html=True)
+        st.caption(
+            "sentence-transformers (embeddings) · ChromaDB (vector store) · "
+            "cross-encoder reranking · Gemini/OpenRouter (generation) — all free-tier."
+        )
+
+    # -----------------------------------------------------------------------
+    # Main: Q&A
+    # -----------------------------------------------------------------------
+    if not repo_infos:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="title">No repositories ingested yet</div>
+                <div class="desc">
+                    Paste a public GitHub URL into the sidebar and click <b>Ingest repo</b>
+                    to build a searchable knowledge base you can ask questions against.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
+    if not st.session_state.history:
+        st.markdown(
+            f"""
+            <div class="empty-state">
+                <div class="title">Ask something about {options[selected_collection]['display_name']}</div>
+                <div class="desc">Try one of these to get started, or type your own question below.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        suggestions = [
+            "What does this repo do, at a high level?",
+            "Where is the main entry point?",
+            "How is authentication handled?",
+        ]
+        st.markdown(
+            "".join(f'<span class="suggestion-chip">{s}</span>' for s in suggestions),
+            unsafe_allow_html=True,
+        )
+
+    question = st.chat_input("Ask a question about the selected repo...")
+
+    for past_question, result in st.session_state.history:
+        with st.chat_message("user"):
+            st.write(past_question)
+        with st.chat_message("assistant"):
+            st.write(result.answer)
+            _render_citations(result)
+
+    if question:
+        if not selected_collection:
+            st.error("Select an ingested repo from the sidebar first.")
+        else:
+            with st.chat_message("user"):
+                st.write(question)
+
+            with st.chat_message("assistant"):
+                try:
+                    chat_history = [(q, r.answer) for q, r in st.session_state.history]
+                    with st.spinner("Retrieving context..."):
+                        text_stream, handle = answer_question_stream(
+                            selected_collection, question, chat_history=chat_history
+                        )
+                    full_answer = st.write_stream(text_stream)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Failed to answer question=%r", question)
+                    st.error(f"Failed to answer: {exc}")
+                    full_answer = None
+                    handle = None
+
+                if full_answer is not None:
+                    if handle.error:
+                        # A partial answer may already be streamed/shown above —
+                        # this surfaces the failure without hiding what did come through.
+                        st.error(handle.error)
+                    result = AnswerResult(
+                        answer=full_answer,
+                        citations=handle.citations,
+                        provider=handle.provider or "unknown",
+                        model=handle.model or "unknown",
+                        confidence=handle.confidence,
+                        confidence_label=handle.confidence_label,
+                        resolved_question=handle.resolved_question,
+                        retrieval_seconds=handle.retrieval_seconds,
+                    )
+                    _render_citations(result)
+                    st.session_state.history.append((question, result))
+
+
+try:
+    main()
+except Exception:  # noqa: BLE001 - top-level safety net so a bug never dumps a raw
+    # traceback into the user's browser. Full traceback still goes to the server
+    # console (logger.exception) and is available in-app via the expander below,
+    # so nothing is actually lost for debugging — it's just not shown to the user
+    # as a wall of text by default.
+    logger.exception("Unhandled exception while rendering the app")
+    st.error(
+        "Something went wrong and the app couldn't finish rendering this run. "
+        "Try again, or check the details below if it keeps happening."
+    )
+    with st.expander("Error details (for debugging)"):
+        st.code(traceback.format_exc())
