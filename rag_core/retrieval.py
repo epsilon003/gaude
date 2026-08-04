@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -76,20 +77,51 @@ def _sigmoid(x: float) -> float:
         return 0.0 if x < 0 else 1.0
 
 
-def _compute_confidence(citations: list[Citation]) -> tuple[float, str]:
-    """Heuristic groundedness signal from cross-encoder rerank scores — NOT a
-    calibrated probability, just a rough "does the retrieved context actually
-    look relevant" indicator. ms-marco-MiniLM raw scores for relevant pairs
-    typically run ~0 to +10, irrelevant pairs ~0 to -11; the sigmoid just maps
-    that to a 0-1 range for display, and the thresholds below are a rough
-    eyeball split, not a validated cutoff."""
-    if not citations:
+def _compute_confidence(all_scored: list[dict], top_k_final: int) -> tuple[float, str]:
+    """Heuristic groundedness signal — NOT a calibrated probability.
+
+    Deliberately RELATIVE, not absolute: it measures how much better the
+    cited (top_k_final) chunks scored than the rest of the retrieved-but-
+    discarded pool, rather than comparing the raw score against a fixed
+    threshold.
+
+    Why: cross-encoder rerank scores are un-normalized logits whose actual
+    range depends heavily on how close the content is to what the model was
+    trained on. ms-marco-MiniLM-L-6-v2 was trained on MS MARCO — web search
+    queries against natural-language prose — and has never seen source code,
+    so its scores for code chunks run in a different (typically lower) range
+    than for the prose it was calibrated on. A fixed absolute threshold
+    picked by eyeballing generic score ranges will systematically misjudge
+    domains the model wasn't trained on (this is exactly what caused
+    groundedness to read "Weak" almost universally for a code Q&A tool).
+    Comparing top-scored vs. bottom-scored chunks from the SAME retrieval
+    call sidesteps that: whatever the model's absolute range is for this
+    content, "meaningfully better than the discarded tail" is a comparison
+    against itself, not against a number tuned for a different domain.
+
+    all_scored: every candidate returned by Reranker.score() (already sorted
+    descending, includes ones NOT selected as citations).
+    """
+    if not all_scored:
         return 0.0, "None"
-    avg_score = sum(c.rerank_score for c in citations) / len(citations)
-    confidence = _sigmoid(avg_score)
+
+    top = all_scored[:top_k_final]
+    discarded = all_scored[top_k_final:]
+
+    top_avg = sum(c["rerank_score"] for c in top) / len(top)
+    if discarded:
+        baseline = sum(c["rerank_score"] for c in discarded) / len(discarded)
+    else:
+        # Fewer candidates existed than top_k_final — nothing to compare
+        # against, so we can't judge distinctiveness. Defaults to Moderate
+        # via margin=0 below rather than claiming false confidence.
+        baseline = top_avg
+
+    margin = top_avg - baseline  # >= 0 by construction (top is always the highest-scored subset)
+    confidence = _sigmoid(margin)
     if confidence >= 0.75:
         label = "Strong"
-    elif confidence >= 0.4:
+    elif confidence >= 0.5:
         label = "Moderate"
     else:
         label = "Weak"
@@ -130,18 +162,20 @@ class AnswerResult:
     confidence: float = 0.0
     confidence_label: str = "N/A"
     resolved_question: str | None = None  # the standalone/condensed question actually used, if different
+    retrieval_seconds: float = 0.0  # time spent in vector search + reranking, excludes generation
 
 
 @dataclass
 class StreamAnswerHandle:
     """Mutable sidecar returned alongside the streaming text iterator.
-    citations/confidence are known immediately (retrieval/rerank happen
-    eagerly, before any streaming starts); provider/model/error are only
-    known once the iterator has been fully consumed."""
+    citations/confidence/retrieval_seconds are known immediately (retrieval/
+    rerank happen eagerly, before any streaming starts); provider/model/error
+    are only known once the iterator has been fully consumed."""
     citations: list[Citation] = field(default_factory=list)
     confidence: float = 0.0
     confidence_label: str = "N/A"
     resolved_question: str | None = None
+    retrieval_seconds: float = 0.0
     provider: str | None = None
     model: str | None = None
     error: str | None = None
@@ -149,18 +183,22 @@ class StreamAnswerHandle:
 
 def _retrieve_and_rerank(
     collection_name: str, question: str, top_k_retrieve: int, top_k_final: int
-) -> tuple[list[dict], list[Citation]]:
+) -> tuple[list[dict], list[dict], list[Citation]]:
     """Shared by answer_question and answer_question_stream. `question` here
     should already be the resolved/standalone question (post-condensation).
-    Returns (top_chunks, citations) — top_chunks is empty if nothing was
-    retrieved."""
+    Returns (top_chunks, all_scored, citations):
+      - top_chunks: the top_k_final chunks used for the LLM prompt
+      - all_scored: the full retrieved-and-scored pool (for _compute_confidence)
+      - citations: Citation objects for top_chunks
+    All three are empty if nothing was retrieved."""
     store = get_vector_store()
     candidates = store.query(collection_name, question, top_k=top_k_retrieve)
     if not candidates:
-        return [], []
+        return [], [], []
 
     reranker = get_reranker()
-    top_chunks = reranker.rerank(question, candidates, top_k=top_k_final)
+    all_scored = reranker.score(question, candidates)
+    top_chunks = all_scored[:top_k_final]
 
     collection_meta = store.get_collection_metadata(collection_name)
     source_url = collection_meta.get("source_url")
@@ -179,7 +217,7 @@ def _retrieve_and_rerank(
         )
         for c in top_chunks
     ]
-    return top_chunks, citations
+    return top_chunks, all_scored, citations
 
 
 def _resolve_question(llm: LLMClient, question: str, chat_history: list[tuple[str, str]] | None) -> str:
@@ -203,17 +241,19 @@ def answer_question(
         return AnswerResult(answer=routed, citations=[], provider="none", model="none")
 
     llm = LLMClient()
+    t0 = time.perf_counter()
     resolved_question = _resolve_question(llm, question, chat_history)
 
-    top_chunks, citations = _retrieve_and_rerank(
+    top_chunks, all_scored, citations = _retrieve_and_rerank(
         collection_name, resolved_question, top_k_retrieve, top_k_final
     )
+    retrieval_seconds = time.perf_counter() - t0
     if not top_chunks:
         return AnswerResult(answer=NO_CONTEXT_MESSAGE, citations=[], provider="none", model="none")
 
     prompt = build_user_prompt(resolved_question, top_chunks)
     result = llm.generate(user_prompt=prompt)
-    confidence, confidence_label = _compute_confidence(citations)
+    confidence, confidence_label = _compute_confidence(all_scored, top_k_final)
 
     return AnswerResult(
         answer=result.answer,
@@ -223,6 +263,7 @@ def answer_question(
         confidence=confidence,
         confidence_label=confidence_label,
         resolved_question=resolved_question if resolved_question != question else None,
+        retrieval_seconds=retrieval_seconds,
     )
 
 
@@ -236,7 +277,7 @@ def answer_question_stream(
     """
     Streaming counterpart to answer_question(). Routing, condensation,
     retrieval, and reranking all happen eagerly (fast — not worth streaming),
-    so handle.citations/confidence/resolved_question are populated before
+    so handle.citations/confidence/resolved_question/retrieval_seconds are populated before
     this function even returns. Only LLM generation is streamed; iterate the
     returned generator (e.g. via st.write_stream) to get text as it arrives.
     handle.provider/handle.model/handle.error are populated once the
@@ -252,17 +293,20 @@ def answer_question_stream(
         return _routed(), handle
 
     llm = LLMClient()
+    t0 = time.perf_counter()
     resolved_question = _resolve_question(llm, question, chat_history)
 
-    top_chunks, citations = _retrieve_and_rerank(
+    top_chunks, all_scored, citations = _retrieve_and_rerank(
         collection_name, resolved_question, top_k_retrieve, top_k_final
     )
-    confidence, confidence_label = _compute_confidence(citations)
+    retrieval_seconds = time.perf_counter() - t0
+    confidence, confidence_label = _compute_confidence(all_scored, top_k_final)
     handle = StreamAnswerHandle(
         citations=citations,
         confidence=confidence,
         confidence_label=confidence_label,
         resolved_question=resolved_question if resolved_question != question else None,
+        retrieval_seconds=retrieval_seconds,
     )
 
     if not top_chunks:
