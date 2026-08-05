@@ -20,7 +20,7 @@ from rag_core.retrieval import AnswerResult, answer_question_stream
 from rag_core.vector_store import get_vector_store
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # st.set_page_config must be the first Streamlit command in the script, so
