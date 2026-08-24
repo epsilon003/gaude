@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* Design tokens carried over from the Streamlit build for a consistent
+   product identity across both UIs: deep navy + teal/mint accent, avoiding
+   the generic "AI-generated" cream+terracotta or near-black+acid-green looks. */
+@theme inline {
+  --color-canvas: #f4f6fb;
+  --color-card: #ffffff;
+  --color-ink: #1b2233;
+  --color-muted: #5b637a;
+  --color-navy: #141b34;
+  --color-navy-light: #1e2748;
+  --color-accent: #2ecc9b;
+  --color-hairline: #e2e6f0;
+  --color-slate-on-dark: #a9b2cc;
+
+  --color-confidence-strong: #1e8449;
+  --color-confidence-strong-bg: #2ecc9b26;
+  --color-confidence-moderate: #9a7d0a;
+  --color-confidence-moderate-bg: #f1c40f2e;
+  --color-confidence-weak: #943126;
+  --color-confidence-weak-bg: #e74c3c26;
+
+  --font-display: Cambria, Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+  font-family: var(--font-body);
+}
