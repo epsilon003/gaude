@@ -1,5 +1,6 @@
 import { ProviderBadge, ConfidenceBadge, TimingBadge } from "./Badges";
 import { CitationCard } from "./CitationCard";
+import { ThinkingOrbs } from "./ThinkingOrbs";
 import type { Citation } from "@/lib/api";
 
 export interface DisplayMessage {
@@ -20,7 +21,7 @@ export function ChatMessage({ message }: { message: DisplayMessage }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end mb-3">
-        <div className="bg-navy text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[75%] text-sm">
+        <div className="elevated bg-navy text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[75%] text-sm">
           {message.content}
         </div>
       </div>
@@ -28,18 +29,23 @@ export function ChatMessage({ message }: { message: DisplayMessage }) {
   }
 
   const hasCitations = !!message.citations?.length;
+  const isThinking = !!message.streaming && message.content.length === 0;
 
   return (
     <div className="flex justify-start mb-4">
-      <div className="bg-card border border-hairline rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%] text-sm">
-        <div className="whitespace-pre-wrap leading-relaxed text-ink">
-          {message.content}
-          {message.streaming && <span className="inline-block w-1.5 h-4 bg-ink/40 ml-0.5 align-middle animate-pulse" />}
-        </div>
-
-        {message.error && (
-          <p className="text-confidence-weak text-xs mt-2">{message.error}</p>
+      <div className="elevated bg-card border border-hairline rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%] text-sm transition-colors">
+        {isThinking ? (
+          <ThinkingOrbs />
+        ) : (
+          <div className="whitespace-pre-wrap leading-relaxed text-ink">
+            {message.content}
+            {message.streaming && (
+              <span className="inline-block w-1.5 h-4 bg-ink/40 ml-0.5 align-middle animate-pulse" />
+            )}
+          </div>
         )}
+
+        {message.error && <p className="text-confidence-weak text-xs mt-2">{message.error}</p>}
 
         {hasCitations && (
           <div className="mt-3 pt-3 border-t border-hairline">
