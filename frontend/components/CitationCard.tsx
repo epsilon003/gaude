@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { oneLight, oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { Citation } from "@/lib/api";
+import { useTheme } from "@/lib/theme";
 
 // Mirrors app.py's _LANGUAGE_MAP so citation previews highlight the same way
 // the Streamlit UI does.
@@ -47,15 +48,27 @@ function guessLanguage(filePath: string): string {
 
 export function CitationCard({ citation }: { citation: Citation }) {
   const [expanded, setExpanded] = useState(false);
+  const { theme } = useTheme();
 
   return (
-    <div className="border border-hairline rounded-lg mb-1.5 overflow-hidden">
+    <div className="border border-hairline rounded-lg mb-1.5 overflow-hidden bg-card">
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-canvas transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-card-hover transition-colors"
       >
-        <span className="font-mono text-ink">
+        <span className="font-mono text-ink flex items-center gap-1.5">
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            className={`text-muted shrink-0 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+          >
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           {citation.file_path}:{citation.start_line}-{citation.end_line}
         </span>
         <span className="text-muted text-xs ml-3 shrink-0">
@@ -76,7 +89,7 @@ export function CitationCard({ citation }: { citation: Citation }) {
           )}
           <SyntaxHighlighter
             language={guessLanguage(citation.file_path)}
-            style={oneLight}
+            style={theme === "dark" ? oneDark : oneLight}
             customStyle={{ margin: 0, borderRadius: "0.375rem", fontSize: "0.8rem" }}
           >
             {citation.text || "(no preview available)"}
