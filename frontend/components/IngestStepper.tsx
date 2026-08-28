@@ -30,14 +30,20 @@ export function IngestStepper({ currentIndex }: { currentIndex: number }) {
         return (
           <div
             key={step}
-            className={[
-              "flex-1 text-center text-[0.68rem] font-semibold rounded px-1 py-1.5 transition-colors",
-              done && "bg-accent/20 text-confidence-strong",
-              active && "bg-blue-500/20 text-blue-700",
-              !done && !active && "bg-black/5 text-muted opacity-50",
-            ]
-              .filter(Boolean)
-              .join(" ")}
+            className="flex-1 text-center text-[0.68rem] font-semibold rounded-md px-1 py-1.5 transition-colors duration-300"
+            style={{
+              backgroundColor: done
+                ? "var(--color-confidence-strong-bg)"
+                : active
+                  ? "var(--color-info-bg)"
+                  : "color-mix(in srgb, var(--color-muted) 12%, transparent)",
+              color: done
+                ? "var(--color-confidence-strong)"
+                : active
+                  ? "var(--color-info)"
+                  : "var(--color-muted)",
+              opacity: done || active ? 1 : 0.55,
+            }}
           >
             {step}
           </div>
