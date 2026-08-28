@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { listRepos, type RepoInfo } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function Home() {
   const [repos, setRepos] = useState<RepoInfo[]>([]);
@@ -36,14 +37,17 @@ export default function Home() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <header className="border-b border-hairline px-4 md:px-8 py-4">
-        <h1 className="font-[family-name:var(--font-display)] text-[1.5rem] font-bold text-ink">
-          Grounded Q&A for Internal Codebases
-        </h1>
-        <p className="text-sm text-muted mt-0.5">
-          Ask natural-language questions about a GitHub repo. Answers are grounded in
-          retrieved code/doc chunks with file + line citations — free-tier stack only.
-        </p>
+      <header className="sticky top-0 z-10 border-b border-hairline px-4 md:px-8 py-4 flex items-center justify-between gap-4 bg-canvas/85 backdrop-blur-sm">
+        <div>
+          <h1 className="font-[family-name:var(--font-display)] text-[1.5rem] font-bold text-ink leading-tight">
+            Grounded Q&A for Internal Codebases
+          </h1>
+          <p className="text-sm text-muted mt-0.5">
+            Ask natural-language questions about a GitHub repo. Answers are grounded in
+            retrieved code/doc chunks with file + line citations — free-tier stack only.
+          </p>
+        </div>
+        <ThemeToggle />
       </header>
 
       <div className="flex flex-1 min-h-0 flex-col md:flex-row">
