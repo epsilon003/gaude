@@ -2,7 +2,7 @@ const CONFIDENCE_STYLES: Record<string, { color: string; bg: string }> = {
   Strong: { color: "var(--color-confidence-strong)", bg: "var(--color-confidence-strong-bg)" },
   Moderate: { color: "var(--color-confidence-moderate)", bg: "var(--color-confidence-moderate-bg)" },
   Weak: { color: "var(--color-confidence-weak)", bg: "var(--color-confidence-weak-bg)" },
-  None: { color: "var(--color-muted)", bg: "#8891a826" },
+  None: { color: "var(--color-muted)", bg: "color-mix(in srgb, var(--color-muted) 15%, transparent)" },
 };
 
 function BadgeBase({
@@ -26,7 +26,7 @@ function BadgeBase({
 
 export function ProviderBadge({ provider, model }: { provider: string; model: string }) {
   return (
-    <BadgeBase color="#1e8449" bg="#2ecc9b26">
+    <BadgeBase color="var(--color-confidence-strong)" bg="var(--color-confidence-strong-bg)">
       {provider} · {model}
     </BadgeBase>
   );
@@ -35,7 +35,7 @@ export function ProviderBadge({ provider, model }: { provider: string; model: st
 export function TimingBadge({ seconds }: { seconds: number }) {
   if (!seconds) return null;
   return (
-    <BadgeBase color="var(--color-muted)" bg="#8891a826">
+    <BadgeBase color="var(--color-muted)" bg="color-mix(in srgb, var(--color-muted) 15%, transparent)">
       Retrieved in {seconds.toFixed(2)}s
     </BadgeBase>
   );
