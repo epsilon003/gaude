@@ -116,7 +116,7 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
                   key={s}
                   type="button"
                   onClick={() => setInput(s)}
-                  className="inline-block border border-hairline rounded-lg px-3 py-1.5 m-1 text-sm text-ink/85 hover:bg-canvas transition-colors"
+                  className="inline-block bg-card border border-hairline rounded-lg px-3 py-1.5 m-1 text-sm text-ink/85 hover:bg-card-hover hover:border-accent/40 transition-colors"
                 >
                   {s}
                 </button>
@@ -143,14 +143,17 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a question about the selected repo..."
           disabled={busy || !selectedCollection}
-          className="flex-1 border border-hairline rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
+          className="flex-1 bg-card border border-hairline rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow"
         />
         <button
           type="submit"
           disabled={busy || !selectedCollection || !input.trim()}
-          className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors"
+          className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors flex items-center gap-1.5"
         >
           Send
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
         </button>
       </form>
     </div>
@@ -159,7 +162,7 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
 
 function EmptyState({ title, desc }: { title: string; desc: string }) {
   return (
-    <div className="text-center py-14 px-6 opacity-90 border border-dashed border-hairline rounded-2xl mt-2 max-w-2xl mx-auto">
+    <div className="text-center py-14 px-6 bg-card/40 border border-dashed border-hairline rounded-2xl mt-2 max-w-2xl mx-auto">
       <div className="font-semibold text-[1.1rem] mb-1.5 text-ink">{title}</div>
       <div className="text-sm text-muted max-w-md mx-auto leading-relaxed">{desc}</div>
     </div>
