@@ -68,82 +68,78 @@ export function Sidebar({
       : -1;
 
   return (
-    <aside className="w-full md:w-80 shrink-0 border-r border-hairline bg-card p-4 flex flex-col gap-1 overflow-y-auto transition-colors">
-      <div className="text-[0.72rem] font-bold tracking-wider uppercase text-muted/70 mt-1 mb-2">
-        1 · Ingest a repository
-      </div>
-      <input
-        type="text"
-        value={repoUrl}
-        onChange={(e) => setRepoUrl(e.target.value)}
-        placeholder="https://github.com/owner/repo_name"
-        disabled={ingesting}
-        className="bg-canvas text-ink placeholder:text-muted border border-hairline rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow"
-      />
-      <button
-        type="button"
-        onClick={handleIngest}
-        disabled={ingesting}
-        className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors"
-      >
-        {ingesting ? "Ingesting..." : "Ingest repo"}
-      </button>
-
-      {(ingesting || statusText) && <IngestStepper currentIndex={stepIndex} />}
-      {statusText && (
-        <p
-          className={
-            "text-xs mt-1 mb-2 " +
-            (statusKind === "error"
-              ? "text-confidence-weak"
-              : statusKind === "success"
-                ? "text-confidence-strong"
-                : "text-muted")
-          }
+    <aside className="w-full md:w-80 shrink-0 border-r border-hairline bg-card p-4 flex flex-col gap-4 overflow-y-auto transition-colors">
+      <section className="bg-canvas border border-hairline rounded-xl p-3.5">
+        <div className="text-[0.72rem] font-bold tracking-wider uppercase text-muted mb-2.5">
+          Ingest a repository
+        </div>
+        <input
+          type="text"
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+          placeholder="https://github.com/owner/repo_name"
+          disabled={ingesting}
+          className="w-full bg-card text-ink placeholder:text-muted border border-hairline rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow"
+        />
+        <button
+          type="button"
+          onClick={handleIngest}
+          disabled={ingesting}
+          className="w-full bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors"
         >
-          {statusText}
-        </p>
-      )}
+          {ingesting ? "Ingesting..." : "Ingest repo"}
+        </button>
 
-      <div className="text-[0.72rem] font-bold tracking-wider uppercase text-muted/70 mt-4 mb-2">
-        2 · Choose repo to query
-      </div>
-      {repos.length === 0 ? (
-        <p className="text-xs text-muted">No repos ingested yet — add one above to get started.</p>
-      ) : (
-        <>
-          <select
-            value={selectedCollection ?? ""}
-            onChange={(e) => onSelectCollection(e.target.value)}
-            className="bg-canvas text-ink border border-hairline rounded-lg px-3 py-2 text-sm mb-2"
+        {(ingesting || statusText) && <IngestStepper currentIndex={stepIndex} />}
+        {statusText && (
+          <p
+            className={
+              "text-xs mt-1 " +
+              (statusKind === "error"
+                ? "text-confidence-weak"
+                : statusKind === "success"
+                  ? "text-confidence-strong"
+                  : "text-muted")
+            }
           >
-            {repos.map((r) => (
-              <option key={r.name} value={r.name}>
-                {r.display_name}
-              </option>
-            ))}
-          </select>
-          {selectedCollection &&
-            (() => {
-              const info = repos.find((r) => r.name === selectedCollection);
-              if (!info) return null;
-              return (
-                <div className="bg-canvas border border-hairline rounded-[10px] px-3 py-2 text-sm mb-1">
-                  <div className="font-semibold text-ink">{info.display_name}</div>
-                  <div className="text-xs text-muted mt-0.5">{info.chunk_count} chunks indexed</div>
-                </div>
-              );
-            })()}
-        </>
-      )}
+            {statusText}
+          </p>
+        )}
+      </section>
 
-      <div className="text-[0.72rem] font-bold tracking-wider uppercase text-muted/70 mt-4 mb-2">
-        Stack
-      </div>
-      <p className="text-xs text-muted leading-relaxed">
-        sentence-transformers (embeddings) · ChromaDB (vector store) · cross-encoder
-        reranking · Gemini/OpenRouter (generation) — all free-tier.
-      </p>
+      <section className="bg-canvas border border-hairline rounded-xl p-3.5">
+        <div className="text-[0.72rem] font-bold tracking-wider uppercase text-muted mb-2.5">
+          Choose repo to query
+        </div>
+        {repos.length === 0 ? (
+          <p className="text-xs text-muted">No repos ingested yet — add one above to get started.</p>
+        ) : (
+          <>
+            <select
+              value={selectedCollection ?? ""}
+              onChange={(e) => onSelectCollection(e.target.value)}
+              className="w-full bg-card text-ink border border-hairline rounded-lg px-3 py-2 text-sm mb-2"
+            >
+              {repos.map((r) => (
+                <option key={r.name} value={r.name}>
+                  {r.display_name}
+                </option>
+              ))}
+            </select>
+            {selectedCollection &&
+              (() => {
+                const info = repos.find((r) => r.name === selectedCollection);
+                if (!info) return null;
+                return (
+                  <div className="bg-card border border-hairline rounded-[10px] px-3 py-2 text-sm">
+                    <div className="font-semibold text-ink">{info.display_name}</div>
+                    <div className="text-xs text-muted mt-0.5">{info.chunk_count} chunks indexed</div>
+                  </div>
+                );
+              })()}
+          </>
+        )}
+      </section>
     </aside>
   );
 }
