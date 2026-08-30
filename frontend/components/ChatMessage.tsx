@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { ProviderBadge, ConfidenceBadge, TimingBadge } from "./Badges";
 import { CitationCard } from "./CitationCard";
 import { ThinkingOrbs } from "./ThinkingOrbs";
@@ -18,6 +21,8 @@ export interface DisplayMessage {
 }
 
 export function ChatMessage({ message }: { message: DisplayMessage }) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end mb-3">
@@ -65,10 +70,32 @@ export function ChatMessage({ message }: { message: DisplayMessage }) {
               </div>
             )}
 
-            <div className="text-muted text-xs mb-1.5">Sources ({message.citations!.length})</div>
-            {message.citations!.map((c, i) => (
-              <CitationCard key={`${c.file_path}-${c.start_line}-${i}`} citation={c} />
-            ))}
+            <button
+              type="button"
+              onClick={() => setSourcesOpen((o) => !o)}
+              className="w-full flex items-center gap-1.5 text-muted text-xs hover:text-ink transition-colors py-1"
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                className={`shrink-0 transition-transform duration-200 ${sourcesOpen ? "rotate-90" : ""}`}
+              >
+                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Sources ({message.citations!.length})
+            </button>
+
+            {sourcesOpen && (
+              <div className="mt-1.5">
+                {message.citations!.map((c, i) => (
+                  <CitationCard key={`${c.file_path}-${c.start_line}-${i}`} citation={c} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
