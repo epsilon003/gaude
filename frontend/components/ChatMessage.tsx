@@ -4,12 +4,15 @@ import { useState } from "react";
 import { ProviderBadge, ConfidenceBadge, TimingBadge } from "./Badges";
 import { CitationCard } from "./CitationCard";
 import { ThinkingOrbs } from "./ThinkingOrbs";
+import { CopyButton } from "./CopyButton";
+import { MarkdownMessage } from "./MarkdownMessage";
 import type { Citation } from "@/lib/api";
 
 export interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  stopped?: boolean;
   citations?: Citation[];
   provider?: string | null;
   model?: string | null;
@@ -20,7 +23,12 @@ export interface DisplayMessage {
   error?: string | null;
 }
 
-export function ChatMessage({ message }: { message: DisplayMessage }) {
+interface ChatMessageProps {
+  message: DisplayMessage;
+  onRetry?: () => void;
+}
+
+export function ChatMessage({ message, onRetry }: ChatMessageProps) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
   if (message.role === "user") {
@@ -35,22 +43,45 @@ export function ChatMessage({ message }: { message: DisplayMessage }) {
 
   const hasCitations = !!message.citations?.length;
   const isThinking = !!message.streaming && message.content.length === 0;
+  const showCopy = !message.streaming && message.content.length > 0;
 
   return (
-    <div className="flex justify-start mb-4">
+    <div className="flex justify-start mb-4 group/message">
       <div className="elevated bg-card border border-hairline rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%] text-sm transition-colors">
         {isThinking ? (
           <ThinkingOrbs />
         ) : (
-          <div className="whitespace-pre-wrap leading-relaxed text-ink">
-            {message.content}
-            {message.streaming && (
-              <span className="inline-block w-1.5 h-4 bg-ink/40 ml-0.5 align-middle animate-pulse" />
+          <MarkdownMessage content={message.content} streaming={message.streaming} />
+        )}
+
+        {message.streaming && !isThinking && (
+          <span className="inline-block w-1.5 h-4 bg-ink/40 ml-0.5 align-middle animate-pulse" />
+        )}
+
+        {message.stopped && (
+          <p className="text-muted text-xs mt-2 italic">Generation stopped.</p>
+        )}
+
+        {message.error && (
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-confidence-weak text-xs">{message.error}</p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="text-xs font-semibold text-accent hover:underline shrink-0"
+              >
+                Retry
+              </button>
             )}
           </div>
         )}
 
-        {message.error && <p className="text-confidence-weak text-xs mt-2">{message.error}</p>}
+        {showCopy && (
+          <div className="mt-1.5 opacity-0 group-hover/message:opacity-100 transition-opacity">
+            <CopyButton text={message.content} />
+          </div>
+        )}
 
         {hasCitations && (
           <div className="mt-3 pt-3 border-t border-hairline">
