@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { chatStream, type HistoryTurn } from "@/lib/api";
 import { ChatMessage, type DisplayMessage } from "./ChatMessage";
 
@@ -21,75 +21,120 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Cmd/Ctrl+K focuses the question input; Escape stops an in-flight
+  // generation. No command palette here — this app has nothing meaningful
+  // to put in one (no multiple chats, no settings), so Cmd+K just jumps to
+  // the input, which is the part of that shortcut people actually rely on.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      } else if (e.key === "Escape" && busy) {
+        abortRef.current?.abort();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy]);
+
+  const runQuestion = useCallback(
+    async (question: string, historyOverride?: DisplayMessage[]) => {
+      if (!question || !selectedCollection || busy) return;
+
+      const baseMessages = historyOverride ?? messages;
+      const history: HistoryTurn[] = [];
+      for (let i = 0; i < baseMessages.length - 1; i++) {
+        if (baseMessages[i].role === "user" && baseMessages[i + 1]?.role === "assistant") {
+          history.push({ question: baseMessages[i].content, answer: baseMessages[i + 1].content });
+        }
+      }
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setBusy(true);
+      setMessages((prev) => [...prev, { role: "assistant", content: "", streaming: true }]);
+
+      try {
+        let accumulated = "";
+        for await (const evt of chatStream(selectedCollection, question, history, controller.signal)) {
+          if (evt.event === "token") {
+            accumulated += evt.text;
+            setMessages((prev) => {
+              const next = [...prev];
+              next[next.length - 1] = { ...next[next.length - 1], content: accumulated, streaming: true };
+              return next;
+            });
+          } else if (evt.event === "done") {
+            setMessages((prev) => {
+              const next = [...prev];
+              next[next.length - 1] = {
+                role: "assistant",
+                content: accumulated,
+                streaming: false,
+                citations: evt.citations,
+                provider: evt.provider,
+                model: evt.model,
+                confidence: evt.confidence,
+                confidenceLabel: evt.confidence_label,
+                resolvedQuestion: evt.resolved_question,
+                retrievalSeconds: evt.retrieval_seconds,
+                error: evt.error,
+              };
+              return next;
+            });
+          }
+        }
+      } catch (err) {
+        const isAbort = err instanceof DOMException && err.name === "AbortError";
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            content: next[next.length - 1]?.content || "",
+            streaming: false,
+            stopped: isAbort,
+            error: isAbort ? undefined : err instanceof Error ? err.message : String(err),
+          };
+          return next;
+        });
+      } finally {
+        setBusy(false);
+        abortRef.current = null;
+      }
+    },
+    [selectedCollection, busy, messages],
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const question = input.trim();
     if (!question || !selectedCollection || busy) return;
 
-    const history: HistoryTurn[] = [];
-    for (let i = 0; i < messages.length - 1; i++) {
-      if (messages[i].role === "user" && messages[i + 1]?.role === "assistant") {
-        history.push({ question: messages[i].content, answer: messages[i + 1].content });
-      }
-    }
-
     setInput("");
-    setBusy(true);
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: question },
-      { role: "assistant", content: "", streaming: true },
-    ]);
+    const historySnapshot = messages;
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    await runQuestion(question, historySnapshot);
+  }
 
-    try {
-      let accumulated = "";
-      for await (const evt of chatStream(selectedCollection, question, history)) {
-        if (evt.event === "token") {
-          accumulated += evt.text;
-          setMessages((prev) => {
-            const next = [...prev];
-            next[next.length - 1] = { ...next[next.length - 1], content: accumulated, streaming: true };
-            return next;
-          });
-        } else if (evt.event === "done") {
-          setMessages((prev) => {
-            const next = [...prev];
-            next[next.length - 1] = {
-              role: "assistant",
-              content: accumulated,
-              streaming: false,
-              citations: evt.citations,
-              provider: evt.provider,
-              model: evt.model,
-              confidence: evt.confidence,
-              confidenceLabel: evt.confidence_label,
-              resolvedQuestion: evt.resolved_question,
-              retrievalSeconds: evt.retrieval_seconds,
-              error: evt.error,
-            };
-            return next;
-          });
-        }
-      }
-    } catch (err) {
-      setMessages((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          content: next[next.length - 1]?.content || "",
-          streaming: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        return next;
-      });
-    } finally {
-      setBusy(false);
-    }
+  function handleStop() {
+    abortRef.current?.abort();
+  }
+
+  function handleRetry(assistantIndex: number) {
+    const question = messages[assistantIndex - 1]?.content;
+    if (!question) return;
+    const historySnapshot = messages.slice(0, assistantIndex - 1);
+    setMessages((prev) => prev.slice(0, assistantIndex)); // drop the failed answer, keep the user question
+    runQuestion(question, historySnapshot);
   }
 
   if (!hasRepos) {
@@ -127,7 +172,11 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
 
         <div className="max-w-3xl mx-auto w-full">
           {messages.map((m, i) => (
-            <ChatMessage key={i} message={m} />
+            <ChatMessage
+              key={i}
+              message={m}
+              onRetry={m.role === "assistant" && m.error ? () => handleRetry(i) : undefined}
+            />
           ))}
           <div ref={scrollRef} />
         </div>
@@ -138,23 +187,38 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
         className="border-t border-hairline p-4 flex gap-2 max-w-3xl mx-auto w-full"
       >
         <input
+          ref={inputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question about the selected repo..."
+          placeholder="Ask a question about the selected repo... (Ctrl/Cmd+K to focus)"
           disabled={busy || !selectedCollection}
           className="flex-1 bg-card border border-hairline rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow"
         />
-        <button
-          type="submit"
-          disabled={busy || !selectedCollection || !input.trim()}
-          className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors flex items-center gap-1.5"
-        >
-          Send
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </button>
+        {busy ? (
+          <button
+            type="button"
+            onClick={handleStop}
+            className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light transition-colors flex items-center gap-1.5"
+            title="Stop generating (Esc)"
+          >
+            Stop
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!selectedCollection || !input.trim()}
+            className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors flex items-center gap-1.5"
+          >
+            Send
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </button>
+        )}
       </form>
     </div>
   );
