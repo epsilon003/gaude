@@ -1,144 +1,228 @@
-# Grounded Q&A System for Internal Codebases (RAG) MVP
+# Grounded Q&A System for Internal Codebases (RAG)
 
 Ask natural-language questions about a public GitHub repository and get
 streamed, grounded answers with clickable citations back to the exact lines
-they came from — built as a fully **free-tier** stack, no paid APIs, no paid
-infra.
+they came from.
 
-## Stack
+**FastAPI + Next.js** (`api/` + `frontend/`) — the in-progress production
+  path: a real REST/SSE API backend with a React frontend. Both work off the
+  same `rag_core/` — nothing about the Streamlit app breaks as the Next.js
+  side develops.
+
+## Stack (all free)
 
 | Component | Choice | Why |
 |---|---|---|
-| Chunking | LangChain `RecursiveCharacterTextSplitter.from_language()` | Splits on function/class boundaries instead of blind fixed-size cuts; lockfiles (`package-lock.json`, `yarn.lock`, etc.) are excluded entirely — they're noise that can out-rank real source code in retrieval |
-| Embeddings | `sentence-transformers` (`BAAI/bge-small-en-v1.5`) | Runs 100% locally, no API, no rate limits |
-| Vector store | ChromaDB (persisted locally, process-level singleton) | Embedded, zero-infra, free |
+| Chunking | LangChain `RecursiveCharacterTextSplitter.from_language()` | Splits on function/class boundaries; lockfiles (`package-lock.json`, `yarn.lock`, etc.) are excluded entirely — they're noise that can out-rank real source code in retrieval |
+| Embeddings | `sentence-transformers` (`BAAI/bge-small-en-v1.5`), lazy-imported | Runs 100% locally, no API, no rate limits; import deferred to first use so it doesn't block UI startup |
+| Vector store | ChromaDB, local + process-level singleton | Embedded, zero-infra, free; singleton avoids re-paying `PersistentClient`'s warmup cost on every question |
 | Reranking | Local cross-encoder (`ms-marco-MiniLM-L-6-v2`) | Precision pass on top-k before generation; also feeds the groundedness indicator |
 | Generation (primary) | Google AI Studio — Gemini (`GEMINI_MODEL`, default `gemini-3.5-flash`) | Free tier, no card |
-| Generation (fallback) | OpenRouter — pinned model (optional) → `openrouter/free` auto-router | Auto-router self-heals as OpenRouter's free lineup changes; free slugs get pulled with little notice, so this is the default rather than a pinned model |
-| UI | Streamlit, with streaming responses | Deploys free on Hugging Face Spaces |
+| Generation (fallback) | OpenRouter — optional pinned model → `openrouter/free` auto-router | Auto-router self-heals as OpenRouter's free lineup changes; free slugs get pulled with little notice, so this is the default, not a pinned model |
+| Backend API | FastAPI, SSE streaming | REST + Server-Sent Events for ingestion progress and chat tokens |
+| Frontend | Next.js (App Router, TypeScript, Tailwind v4) | Dark mode, markdown rendering, stop/retry, all covered below |
 
 ## Features
 
-- **Streamed answers** — text appears token-by-token instead of all at once (`st.write_stream`).
-- **Source citations with previews** — each citation is an expandable panel showing the actual retrieved code snippet, syntax-highlighted, plus a permalink to the exact commit/lines on GitHub (`.../blob/<commit-sha>/path#L12-L20`) when the repo was ingested from `github.com`.
-- **Follow-up questions** — a question like *"what about its error handling?"* gets rewritten into a standalone query using recent chat history before retrieval, so the vector search actually has something to work with. Falls back to the raw question if that rewrite step fails for any reason — never blocks the answer.
-- **Retrieval routing** — greetings and meta questions ("thanks", "what can you do?") skip retrieval and the LLM entirely instead of returning an awkward "nothing relevant found."
-- **Groundedness indicator** — a heuristic "Strong / Moderate / Weak" badge derived from the reranker's relevance scores, giving a rough visual cue for how well-supported an answer actually is. This is *not* a calibrated confidence score, just a rough signal.
-- **Multi-provider resilience** — Gemini → pinned OpenRouter model (if set) → OpenRouter auto-router, with retry-with-backoff on transient errors (429/503) before failing over. Free-tier model IDs get deprecated or pulled with little warning; this stack is built assuming that will keep happening.
+**Answering**
+- Streamed answers (token-by-token, both UIs)
+- Full **markdown rendering** in the Next.js UI — bold, lists, tables, and
+  syntax-highlighted code blocks, with a streaming-safe renderer that
+  auto-closes incomplete `**`/`` ` ``/`~~` mid-stream so partial tokens never
+  show as literal asterisks
+- **Stop generation** (button or `Escape`) and **retry on error** (button
+  resubmits the same question) — Next.js UI
+- Copy-to-clipboard on whole messages and on individual code blocks
+- Follow-up question handling — a question like *"what about its error
+  handling?"* is rewritten into a standalone query using recent chat
+  history before retrieval; falls back to the raw question if that rewrite
+  fails for any reason
+- Retrieval routing — greetings and meta questions skip retrieval and the
+  LLM entirely instead of returning an awkward "nothing relevant found"
+- Source citations with expandable code previews and GitHub permalinks
+  (`.../blob/<commit-sha>/path#L12-L20`) when ingested from `github.com`
+- Groundedness indicator — a heuristic "Strong / Moderate / Weak" badge (see
+  [Grounding score](#grounding-score-the-math) below for exactly how it's computed)
+- Multi-provider resilience — Gemini → optional pinned OpenRouter model →
+  OpenRouter auto-router, with retry-with-backoff on transient errors before
+  failing over
 
-## Setup and Installation
+**Next.js UI specifically**
+- Dark mode (persisted, respects system preference on first visit)
+- "Thinking" indicator with rotating status text during retrieval, before
+  the first token arrives
+- Loading screen while checking backend connectivity; a distinct
+  "can't reach the server" screen (with retry) if the backend is down,
+  instead of silently showing "no repos ingested"
+- `Ctrl`/`Cmd`+`K` focuses the question input
+- Collapsible sources list (collapsed by default)
 
-1. **Clone the repository:**
-   ```bash
-   git clone <your-repo-url>
-   cd <your-repo-name>
-   ```
+## Setup and Installation FastAPI + Next.js
 
-2. **Create a virtual environment and install dependencies:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-   > If you hit `ModuleNotFoundError: No module named 'torchvision'` — `transformers` (pulled in by `sentence-transformers`) probes for it on import even for our text-only embedding model. It's pinned in `requirements.txt`, so a fresh install should be fine; if you're on an older `venv`, just `pip install torchvision`.
+**Terminal 1 — backend**, from the project root:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn api.main:app --reload --port 8000
+```
+Check it's alive at `http://localhost:8000/docs` (interactive Swagger UI).
 
-3. **Set up environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   Then fill in:
-   - `GEMINI_API_KEY` — free key, no card required: https://aistudio.google.com/apikey
-   - `OPENROUTER_API_KEY` — free key, no card required: https://openrouter.ai/keys
+**Terminal 2 — frontend**, from `frontend/`:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Opens at `http://localhost:3000`. Talks to the backend at `localhost:8000`
+by default — only need `frontend/.env.local` (copy from
+`.env.local.example`) if the backend is running somewhere else.
 
-   You only strictly need one of the two, but both is recommended so the fallback
-   actually has somewhere to fall back to. Leave `OPENROUTER_MODEL` unset (default) —
-   it uses OpenRouter's `openrouter/free` auto-router, which stays working even
-   as OpenRouter's specific free-model lineup changes underneath you.
+The backend needs to be running before you try ingesting/chatting — if it
+isn't, the frontend shows the "can't reach the server" screen rather than
+failing silently. `.env` at the project root: `GEMINI_API_KEY` and/or
+`OPENROUTER_API_KEY` (free, no card — links in `.env.example`), and
+optionally `HF_TOKEN` to silence a harmless Hugging Face Hub rate-limit
+warning on first model download.
 
-   > **Free-tier model IDs rotate.** If you get a 404 like "no longer available"
-   > or "unavailable for free," the pinned model name is stale — check
-   > https://ai.google.dev/gemini-api/docs/models and
-   > https://openrouter.ai/models?order=pricing-low-to-high and update `.env`.
-   > No code changes needed.
-
-4. **Ingest a GitHub repository** (CLI):
-   ```bash
-   python ingest.py --repo_url "https://github.com/owner/repo_name"
-   ```
-   This clones the repo, chunks it, embeds it locally, and stores it in
-   `vector_store/` (a Chroma collection named after the repo, tagged with the
-   source URL and the commit SHA that was cloned — used for GitHub permalinks
-   in citations).
-
-   You can also ingest directly from the Streamlit sidebar (step 5).
-
-   > **Already ingested a repo before this update?** Its citations won't have
-   > GitHub links or benefit from the lockfile-exclusion fix until you
-   > re-ingest it — the collection metadata those features need didn't exist
-   > yet when it was first indexed. Just re-run the ingest command.
-
-5. **Start the app:**
-   ```bash
-   streamlit run app.py
-   ```
-   Open the local URL Streamlit prints (default `http://localhost:8501`).
-   Ingest a repo from the sidebar, or pick one you already ingested via the CLI,
-   then ask questions in the chat box. Answers stream in. Expand a citation to
-   see the actual code and jump to it on GitHub.
+> **Free-tier model IDs rotate.** If you get a 404 like "no longer
+> available" or "unavailable for free," the pinned model name in `.env` is
+> stale — check https://ai.google.dev/gemini-api/docs/models and
+> https://openrouter.ai/models?order=pricing-low-to-high and update there.
+> No code changes needed.
 
 ## Usage
 
 1. Paste a public GitHub repo URL into the sidebar and click **Ingest repo**.
 2. Select the ingested repo from the dropdown.
-3. Ask a question about the codebase in plain English. Ask a follow-up and it'll
-   automatically resolve pronouns/context from the conversation so far (you'll
-   see "Interpreted as: ..." if your question got rewritten).
+3. Ask a question. Ask a follow-up and it resolves pronouns/context from the
+   conversation automatically (shown as "Interpreted as: ..." when it
+   rewrites your question).
 4. The answer streams in with a provider badge, a groundedness badge, and an
    expandable **Sources** list — each source shows the actual retrieved code
    and links to the exact commit/lines on GitHub.
+
+## Grounding score: the math
+
+The confidence badge (Strong / Moderate / Weak) is a heuristic, not a
+calibrated probability — worth understanding exactly what it does and
+doesn't mean before trusting it.
+
+**What it's built from:** every retrieval fetches `top_k_retrieve = 15`
+candidates from the vector store, reranks all 15 with a local cross-encoder,
+and keeps the top `top_k_final = 5` as the cited/prompted chunks. That
+leaves 10 "discarded" candidates that were retrieved but not used.
+
+**The formula** (`rag_core/retrieval.py::_compute_confidence`):
+
+```
+top_avg      = mean(rerank_score for the 5 cited chunks)
+baseline     = mean(rerank_score for the 10 discarded chunks)
+margin       = top_avg − baseline
+confidence   = 1 / (1 + e^(−margin))        # sigmoid, maps margin to (0, 1)
+
+label = "Strong"   if confidence ≥ 0.75
+        "Moderate" if confidence ≥ 0.50
+        "Weak"     otherwise
+```
+
+**Why relative, not absolute:** the cross-encoder's raw scores are
+un-normalized logits with a range that depends heavily on how close the
+content is to what the model was trained on. `ms-marco-MiniLM-L-6-v2` was
+trained on MS MARCO — web search queries against natural-language prose —
+and has never seen source code, so its scores for code chunks run
+systematically lower than for the prose it was calibrated on. An early
+version of this feature compared `top_avg` against a fixed threshold picked
+by eyeballing generic score ranges, and it read "Weak" almost universally
+for exactly this reason — the domain mismatch, not the actual answer
+quality. Comparing the top 5 against the bottom 10 *from the same retrieval
+call* sidesteps that: whatever the model's absolute range happens to be for
+this content, "meaningfully better than what got discarded" is a comparison
+against itself, not against a number tuned for a different domain.
+
+**Worked example**, using real numbers from testing this fix: a pool where
+every single score was negative — top 5 averaging around **−2.2**, discarded
+10 averaging around **−8.9**:
+
+```
+margin     = −2.2 − (−8.9) = 6.7
+confidence = 1 / (1 + e^−6.7) ≈ 0.9988
+label      = "Strong"
+```
+
+Despite every raw score being negative, the *margin* is large, so this
+correctly reads Strong — the old absolute-threshold version would have
+called this "Weak" purely because every number was negative, regardless of
+how well-separated the top chunks actually were from the noise.
+
+**Edge case:** if fewer than 5 candidates exist at all (tiny ingested repo),
+there's no discarded tail to compare against — `baseline` falls back to
+`top_avg`, making `margin = 0` and `confidence = sigmoid(0) = 0.5` exactly,
+landing in "Moderate." That's deliberate: it's "can't assess distinctiveness
+here," not a claim of either strong or weak grounding.
+
+**Known limitation, stated plainly:** the `0.75`/`0.5` cutoffs are still a
+judgment call — margin-based rather than absolute fixes the *domain
+mismatch* bug, but the exact bucket boundaries haven't been validated
+against a labeled dataset of real question/answer pairs. If "Weak" or
+"Strong" starts looking miscalibrated once you've used this on real repos
+for a while, those two numbers are what to adjust — not the underlying
+relative-margin approach.
 
 ## Project Structure
 
 ```
 .
 ├── .env.example
-├── .gitignore
-├── requirements.txt
 ├── ingest.py              # CLI: clone, chunk, embed, store a repo
-├── app.py                 # Streamlit UI: ingest + streaming chat + citations
-├── rag_core/
-│   ├── chunking.py         # Language-aware splitting, line-number resolution, lockfile exclusion
-│   ├── embeddings.py       # Local sentence-transformers wrapper (lazy-imported — see below)
-│   ├── vector_store.py     # ChromaDB wrapper: per-repo collections, process-level singleton, commit_sha metadata
-│   ├── reranker.py         # Local cross-encoder reranking (lazy-imported — see below)
-│   ├── llm_client.py       # Gemini + OpenRouter clients: streaming, retry/failover, query condensation
-│   ├── ingestion.py        # Orchestrates clone -> chunk -> embed -> store, captures commit SHA
-│   └── retrieval.py        # Orchestrates routing -> condense -> retrieve -> rerank -> generate
-└── vector_store/           # Local Chroma persistence (gitignored)
+├── api/                   # FastAPI backend
+│   ├── main.py            # 5 endpoints: health, repos, ingest (+SSE progress), chat (SSE)
+│   ├── jobs.py            # in-memory background ingestion job tracking (no Celery/Redis — not needed at this scale)
+│   └── schemas.py         # Pydantic request models
+├── frontend/              # Next.js UI
+│   ├── app/               # layout, page, global styles/design tokens
+│   ├── components/        # Sidebar, ChatPanel, ChatMessage, CitationCard,
+│   │                        MarkdownMessage, Badges, ThinkingOrbs, ThemeToggle,
+│   │                        LoadingScreen, DeadScreen, CopyButton, IngestStepper
+│   ├── lib/               # api.ts (typed client + SSE parsing), theme.tsx,
+│   │                        incompleteMarkdown.ts (streaming markdown buffering)
+│   └── README.md          # frontend-specific setup notes
+└── rag_core/              # Shared business logic — used by BOTH app.py and api/
+    ├── chunking.py        # language-aware splitting, line-number resolution, lockfile exclusion
+    ├── embeddings.py      # local sentence-transformers wrapper (lazy-imported)
+    ├── vector_store.py    # ChromaDB wrapper: per-repo collections, singleton, commit_sha metadata
+    ├── reranker.py        # local cross-encoder reranking (lazy-imported)
+    ├── llm_client.py      # Gemini + OpenRouter clients: streaming, retry/failover, query condensation
+    ├── ingestion.py       # orchestrates clone -> chunk -> embed -> store, captures commit SHA
+    └── retrieval.py       # orchestrates routing -> condense -> retrieve -> rerank -> generate
 ```
 
-A couple of implementation details worth knowing if you're extending this:
+A few implementation details worth knowing if you're extending this:
 
-- **`embeddings.py`/`reranker.py` import `sentence_transformers` lazily**, inside
-  `__init__`, not at module level. That import drags in `torch`, which is slow
-  (seconds, not milliseconds) — importing it at module level would block
-  Streamlit from rendering *anything* until it finished. The heavy load now
-  only happens on first actual use (first ingest or first question), not at
-  page load.
-- **`get_vector_store()` is a process-level singleton** (`functools.lru_cache`),
-  not re-created per Streamlit rerun or per question. `chromadb.PersistentClient`
-  has a real one-time warmup cost; without this, that cost would be paid
-  repeatedly since Streamlit reruns the whole script on every interaction.
+- **`embeddings.py`/`reranker.py` import `sentence_transformers` lazily**,
+  inside `__init__`, not at module level. That import drags in `torch`,
+  which is slow (seconds, not milliseconds) — importing it at module level
+  would block the UI from rendering anything until it finished.
+- **`get_vector_store()` is a process-level singleton** (`functools.lru_cache`).
+  `chromadb.PersistentClient` has a real one-time warmup cost; without this,
+  that cost would be paid on every question / every Streamlit rerun.
+- **Ingestion is a full rebuild, not incremental.** Re-running ingest on a
+  repo re-clones and re-embeds everything. Also: ingestion shallow-clones
+  (`git clone --depth 1`), so no git history exists locally beyond the
+  ingested commit — worth knowing if you ever build a "explain this diff"
+  feature, since that needs history this pipeline doesn't keep.
 
-## Scope (MVP)
+## Scope
 
 **In scope:** public repo ingestion, language-aware chunking (with lockfile
 exclusion), local embeddings, semantic retrieval + reranking, streamed
-grounded answer generation, file/line citations with previews and GitHub
-permalinks, follow-up question handling, retrieval routing, a groundedness
-indicator, multi-provider failover.
+grounded answer generation with markdown rendering, file/line citations with
+previews and GitHub permalinks, follow-up question handling, retrieval
+routing, a groundedness indicator, multi-provider failover, stop/retry, dark
+mode.
 
-**Out of scope (per PRD):** private repos, multiple repos queried
-simultaneously, control/data-flow analysis, code generation/modification,
-real-time re-ingestion (re-running `ingest.py` does a full re-index, not an
-incremental diff).
+**Out of scope:** private repos, multiple repos queried simultaneously,
+control/data-flow analysis, code generation/modification, incremental
+re-ingestion, conversation history persistence (each session is in-memory
+only — see the project's architecture-planning doc for what that would take).
