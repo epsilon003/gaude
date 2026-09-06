@@ -35,8 +35,8 @@ export function Sidebar({
     setStatusKind("info");
     setStatusText("Starting...");
     setLatestMessage(null);
-    const start = performance.now();
 
+    const start = performance.now();
     try {
       for await (const evt of ingestRepoStream(url)) {
         if (evt.event === "progress") {
@@ -64,8 +64,8 @@ export function Sidebar({
   const stepIndex = ingesting
     ? currentStepIndex(latestMessage)
     : statusKind === "success"
-      ? 4
-      : -1;
+    ? 4
+    : -1;
 
   return (
     <aside className="w-full md:w-80 shrink-0 border-r border-hairline bg-card p-4 flex flex-col gap-4 overflow-y-auto transition-colors">
@@ -89,7 +89,6 @@ export function Sidebar({
         >
           {ingesting ? "Ingesting..." : "Ingest repo"}
         </button>
-
         {(ingesting || statusText) && <IngestStepper currentIndex={stepIndex} />}
         {statusText && (
           <p
@@ -98,8 +97,8 @@ export function Sidebar({
               (statusKind === "error"
                 ? "text-confidence-weak"
                 : statusKind === "success"
-                  ? "text-confidence-strong"
-                  : "text-muted")
+                ? "text-confidence-strong"
+                : "text-muted")
             }
           >
             {statusText}
@@ -121,18 +120,20 @@ export function Sidebar({
               className="w-full bg-card text-ink border border-hairline rounded-lg px-3 py-2 text-sm mb-2"
             >
               {repos.map((r) => (
-                <option key={r.name} value={r.name}>
-                  {r.display_name}
+                <option key={r.collection_name} value={r.collection_name}>
+                  {r.source_url || r.collection_name}
                 </option>
               ))}
             </select>
             {selectedCollection &&
               (() => {
-                const info = repos.find((r) => r.name === selectedCollection);
+                const info = repos.find((r) => r.collection_name === selectedCollection);
                 if (!info) return null;
                 return (
                   <div className="bg-card border border-hairline rounded-[10px] px-3 py-2 text-sm">
-                    <div className="font-semibold text-ink">{info.display_name}</div>
+                    <div className="font-semibold text-ink truncate" title={info.source_url}>
+                      {info.source_url || info.collection_name}
+                    </div>
                     <div className="text-xs text-muted mt-0.5">{info.chunk_count} chunks indexed</div>
                   </div>
                 );
