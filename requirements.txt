@@ -13,3 +13,7 @@ python-dotenv>=1.0.1
 
 # --- CLI ingestion / utils ---
 tqdm>=4.66.0
+
+rank-bm25>=0.2.2
+tree-sitter>=0.21.0
+tree-sitter-language-pack>=0.2.0
