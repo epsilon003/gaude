@@ -23,7 +23,7 @@ export default function Home() {
       if (selectAfter) {
         setSelectedCollection(selectAfter);
       } else {
-        setSelectedCollection((prev) => prev ?? (list.length > 0 ? list[0].name : null));
+        setSelectedCollection((prev) => prev ?? (list.length > 0 ? list[0].collection_name : null));
       }
     } catch {
       // Covers both "backend not running" (connection refused) and any
@@ -37,7 +37,7 @@ export default function Home() {
     refreshRepos();
   }, [refreshRepos]);
 
-  const selectedInfo = repos.find((r) => r.name === selectedCollection);
+  const selectedInfo = repos.find((r) => r.collection_name === selectedCollection);
 
   if (status === "checking") {
     return <LoadingScreen />;
@@ -61,7 +61,6 @@ export default function Home() {
         </div>
         <ThemeToggle />
       </header>
-
       <div className="flex flex-1 min-h-0 flex-col md:flex-row">
         <Sidebar
           repos={repos}
@@ -71,7 +70,7 @@ export default function Home() {
         />
         <ChatPanel
           selectedCollection={selectedCollection}
-          repoDisplayName={selectedInfo?.display_name ?? null}
+          repoDisplayName={selectedInfo?.source_url ?? null}
           hasRepos={repos.length > 0}
         />
       </div>
