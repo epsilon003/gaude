@@ -1,9 +1,10 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
+// Updated to match backend's list_collections_with_info() response
 export interface RepoInfo {
-  name: string;
-  source_url: string | null;
-  display_name: string;
+  collection_name: string;
+  source_url: string;
+  commit_sha: string;
   chunk_count: number;
 }
 
@@ -39,14 +40,17 @@ export interface IngestProgressEvent {
   event: "progress";
   message: string;
 }
+
 export interface IngestDoneEvent {
   event: "done";
   summary: { repo_url: string; collection_name: string; chunk_count: number };
 }
+
 export interface IngestErrorEvent {
   event: "error";
   message: string;
 }
+
 export type IngestEvent = IngestProgressEvent | IngestDoneEvent | IngestErrorEvent;
 
 export interface HistoryTurn {
@@ -54,11 +58,9 @@ export interface HistoryTurn {
   answer: string;
 }
 
-/**
+/** 
  * Parses a `text/event-stream` response body into a stream of JSON-decoded
- * events. Shared by both ingestion progress and chat token streaming, since
- * the backend (api/main.py's `_sse()` helper) formats both identically:
- * `data: {...}\n\n` frames.
+ * events. Shared by both ingestion progress and chat token streaming.
  */
 async function* parseSSEStream<T>(response: Response): AsyncGenerator<T> {
   if (!response.body) {
@@ -67,15 +69,12 @@ async function* parseSSEStream<T>(response: Response): AsyncGenerator<T> {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? ""; // last (possibly incomplete) frame stays buffered
-
     for (const frame of frames) {
       const line = frame.trim();
       if (line.startsWith("data: ")) {
@@ -93,11 +92,6 @@ export async function listRepos(): Promise<RepoInfo[]> {
   return res.json();
 }
 
-/**
- * Starts ingestion, then streams progress events until a `done` or `error`
- * event arrives. Two round-trips (start -> get job_id, then subscribe to its
- * event stream) mirroring the backend's two-endpoint design in api/main.py.
- */
 export async function* ingestRepoStream(repoUrl: string): AsyncGenerator<IngestEvent> {
   const startRes = await fetch(`${API_BASE}/api/repos/ingest`, {
     method: "POST",
@@ -109,7 +103,6 @@ export async function* ingestRepoStream(repoUrl: string): AsyncGenerator<IngestE
     throw new Error(`Failed to start ingestion: ${detail}`);
   }
   const { job_id: jobId } = (await startRes.json()) as { job_id: string };
-
   const eventsRes = await fetch(`${API_BASE}/api/repos/ingest/${jobId}/events`);
   if (!eventsRes.ok) {
     throw new Error(`Failed to subscribe to ingestion events: ${eventsRes.status}`);
@@ -117,10 +110,6 @@ export async function* ingestRepoStream(repoUrl: string): AsyncGenerator<IngestE
   yield* parseSSEStream<IngestEvent>(eventsRes);
 }
 
-/**
- * Streams a chat answer token-by-token, ending with one ChatDoneEvent
- * carrying citations/confidence/provider/timing.
- */
 export async function* chatStream(
   collection: string,
   question: string,
