@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from rag_core.vector_store import get_vector_store
 from rag_core.reranker import get_reranker
+from rag_core.sanitization import sanitize_context, build_safe_system_prompt
 
 @dataclass
 class Citation:
@@ -189,19 +190,15 @@ def answer_question_stream(
         ))
 
     # 4. Format prompt for LLM
-    context = "\n\n".join([
-        f"File: {r['file_path']} (Lines {r['start_line']}-{r['end_line']})\n```{r.get('language', 'text')}\n{r['text']}\n```"
-        for r in reranked
-    ])
-    
+    context = "\n\n".join([f"File: {r['file_path']} (Lines {r['start_line']}-{r['end_line']})\n```{r.get('language', 'text')}\n{r['text']}\n```"
+    for r in reranked])
+    context = sanitize_context(context)
     history_text = ""
     if chat_history:
         history_text = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in chat_history[-4:]])
 
-    prompt = f"""You are an expert software engineer answering questions about a codebase.
-Answer the user's question based *only* on the provided context. 
-If the context does not contain the answer, say "I don't have enough information in the provided code to answer that."
-Cite the file and line numbers in your answer like [File: `path/to/file.py`, Lines: X-Y].
+    system_prompt = build_safe_system_prompt()
+    prompt = f"""{system_prompt}
 
 Context:
 {context}
@@ -215,7 +212,7 @@ User Question: {query}
     # 5. Stream LLM response
     api_key = os.getenv("GEMINI_API_KEY")
     base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     
     if not api_key:
         api_key = os.getenv("OPENROUTER_API_KEY")
