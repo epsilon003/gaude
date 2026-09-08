@@ -7,6 +7,8 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { DeadScreen } from "@/components/DeadScreen";
+import { Toast } from "@/components/Toast";
+import { useToast } from "@/hooks/useToast";
 
 type ConnectionStatus = "checking" | "connected" | "unreachable";
 
@@ -14,7 +16,7 @@ export default function Home() {
   const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("checking");
-
+  const { toasts, showToast, removeToast } = useToast();
   const refreshRepos = useCallback(async (selectAfter?: string) => {
     try {
       const list = await listRepos();
@@ -54,10 +56,6 @@ export default function Home() {
           <h1 className="font-[family-name:var(--font-display)] text-[1.5rem] font-bold text-ink leading-tight">
             Grounded Q&A for Internal Codebases
           </h1>
-          <p className="text-sm text-muted mt-0.5">
-            Ask natural-language questions about a GitHub repo. Answers are grounded in
-            retrieved code/doc chunks with file + line citations — free-tier stack only.
-          </p>
         </div>
         <ThemeToggle />
       </header>
@@ -73,6 +71,14 @@ export default function Home() {
           repoDisplayName={selectedInfo?.source_url ?? null}
           hasRepos={repos.length > 0}
         />
+        {toasts.map((toast) => (
+        <Toast
+          key={toast.id}
+          message={toast.message}
+          type={toast.type}
+          onClose={() => removeToast(toast.id)}
+        />
+      ))}
       </div>
     </div>
   );
