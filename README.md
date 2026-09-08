@@ -38,6 +38,7 @@ Ask natural-language questions about a public GitHub repository and get streamed
 - Loading screen while checking backend connectivity; distinct "can't reach server" screen with retry if the backend is down.
 - `Ctrl`/`Cmd`+`K` focuses the question input.
 - Collapsible sources list (collapsed by default to keep the chat clean).
+- Toast Notifications
 
 ## Setup and Installation
 
