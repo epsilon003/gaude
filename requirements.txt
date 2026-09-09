@@ -10,6 +10,7 @@ openai>=1.40.0
 # --- App / infra ---
 streamlit>=1.37.0
 python-dotenv>=1.0.1
+fastapi
 
 # --- CLI ingestion / utils ---
 tqdm>=4.66.0
