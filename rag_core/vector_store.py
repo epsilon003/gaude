@@ -29,9 +29,18 @@ class VectorStore:
     def get_or_create_collection(self, collection_name: str, source_url: str | None = None, commit_sha: str | None = None):
         if collection_name in [c.name for c in self.client.list_collections()]:
             return self.client.get_collection(collection_name)
+        # chromadb's metadata values must be str/int/float/bool -- None isn't
+        # a valid MetadataValue and raises a TypeError from the Rust binding
+        # (not a clean "collection not found"). This path is hit any time
+        # something queries a collection_name that hasn't been ingested yet
+        # (retrieval.py's retrieve_and_rerank always calls this with no
+        # source_url/commit_sha), so it needs to degrade gracefully instead
+        # of crashing.
+        metadata = {"source_url": source_url, "commit_sha": commit_sha}
+        metadata = {k: v for k, v in metadata.items() if v is not None}
         return self.client.create_collection(
             name=collection_name, 
-            metadata={"source_url": source_url, "commit_sha": commit_sha}
+            metadata=metadata or None,
         )
 
     def add_chunks(self, collection_name: str, chunks: list, source_url: str | None = None, commit_sha: str | None = None, batch_size: int = 64) -> int:
