@@ -154,7 +154,6 @@ Mocks the backend's `/api/repos` response via `page.route()`, so it exercises th
     ├── sanitization.py         # Prompt-injection defense for retrieved context
     ├── ingestion.py            # Orchestrates clone -> chunk -> embed -> store (with SHA skip logic)
     ├── retrieval.py            # Orchestrates routing -> multi-query expand -> retrieve -> rerank -> generate
-    ├── eval.py                 # Standalone script to calibrate confidence thresholds (`python -m rag_core.eval`)
     └── eval_harness.py         # Retrieval quality eval: hit-rate/MRR against eval/golden_dataset.json
 ```
 
