@@ -126,10 +126,6 @@ npm run test:e2e
 ```
 Mocks the backend's `/api/repos` response via `page.route()`, so it exercises the connected/unreachable UI states without needing a live `uvicorn` process.
 
-## Known gaps
-
-- No root-level `LICENSE` file yet (README says MIT; add the actual file).
-
 ## Project Structure
 
 ```text
