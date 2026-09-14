@@ -1,0 +1,62 @@
+[
+  {
+    "question": "How does the ingestion pipeline handle git cloning?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/ingestion.py"]
+  },
+  {
+    "question": "What is the default chunk size and overlap for splitting files?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/chunking.py"]
+  },
+  {
+    "question": "How is hybrid search combining vector and BM25 results?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/vector_store.py"]
+  },
+  {
+    "question": "How does the system defend against prompt injection in retrieved code?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/sanitization.py"]
+  },
+  {
+    "question": "How is the groundedness confidence score computed from rerank scores?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/retrieval.py"]
+  },
+  {
+    "question": "What happens when a background ingestion job fails?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["api/jobs.py"]
+  },
+  {
+    "question": "How are chat responses streamed to the frontend over SSE?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["api/main.py"]
+  },
+  {
+    "question": "How does tree-sitter AST-aware chunking decide which nodes to extract?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/chunking.py"]
+  },
+  {
+    "question": "How is a GitHub permalink built for a citation?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/retrieval.py"]
+  },
+  {
+    "question": "What cross-encoder model is used for reranking?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/reranker.py"]
+  },
+  {
+    "question": "How does incremental ingestion skip repos that haven't changed?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/ingestion.py"]
+  },
+  {
+    "question": "How is a repo URL converted into a ChromaDB collection name?",
+    "collection_name": "https-github-com-epsilon003-gaude",
+    "expected_files": ["rag_core/vector_store.py"]
+  }
+]
