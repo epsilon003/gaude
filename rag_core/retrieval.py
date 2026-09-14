@@ -15,6 +15,15 @@ from openai import OpenAI
 from rag_core.vector_store import get_vector_store
 from rag_core.reranker import get_reranker
 from rag_core.sanitization import sanitize_context, build_safe_system_prompt
+from rag_core.llm_client import get_llm_client
+
+# Internal provider names from llm_client (gemini / openrouter / openrouter-auto)
+# mapped to the labels the UI has always shown.
+_PROVIDER_DISPLAY_NAMES = {
+    "gemini": "Gemini",
+    "openrouter": "OpenRouter",
+    "openrouter-auto": "OpenRouter (auto)",
+}
 
 @dataclass
 class Citation:
@@ -138,7 +147,7 @@ def answer_question_stream(
     """
     handle = Handle()
     handle.resolved_question = query
-    
+
     # 1. Handle greetings/meta queries without retrieval
     if _is_greeting_or_meta(query):
         def greeting_iter():
@@ -149,11 +158,27 @@ def answer_question_stream(
             yield "Hello! I can help you understand this codebase. What would you like to know?"
         return greeting_iter(), handle
 
-    # 2. Retrieve and Rerank
+    # 2. Condense follow-up questions into a standalone form before retrieval,
+    # e.g. "what about its error handling?" -> "How does answer_question_stream
+    # handle errors?". Only meaningful when there's history; fails open (keeps
+    # the raw query) if condensing errors for any reason -- a worse retrieval
+    # query shouldn't be why the whole answer fails.
+    retrieval_query = query
+    if chat_history:
+        try:
+            condensed = get_llm_client().condense_query(query, chat_history)
+            condensed = (condensed or "").strip()
+            if condensed and condensed != query.strip():
+                retrieval_query = condensed
+                handle.resolved_question = condensed
+        except Exception:
+            pass
+
+    # 3. Retrieve and Rerank
     start_time = time.time()
     try:
         reranked = retrieve_and_rerank(
-            collection_name, query, top_k_retrieve=15, top_k_final=5, 
+            collection_name, retrieval_query, top_k_retrieve=15, top_k_final=5, 
             where_filter=where_filter, use_hybrid=True
         )
     except Exception as exc:
@@ -172,7 +197,7 @@ def answer_question_stream(
     handle.confidence = confidence
     handle.confidence_label = label
     
-    # 3. Populate citations (need collection metadata for GitHub URLs)
+    # 4. Populate citations (need collection metadata for GitHub URLs)
     store = get_vector_store()
     collection = store.get_or_create_collection(collection_name)
     meta = collection.metadata or {}
@@ -189,7 +214,9 @@ def answer_question_stream(
             github_url=_build_github_url(source_url, commit_sha, r["file_path"], r["start_line"], r["end_line"])
         ))
 
-    # 4. Format prompt for LLM
+    # 5. Format prompt for LLM. system_prompt carries the guardrails/injection
+    # defense and is sent as its own "system" message by LLMClient below --
+    # it does not need to be repeated inside the user-role content.
     context = "\n\n".join([f"File: {r['file_path']} (Lines {r['start_line']}-{r['end_line']})\n```{r.get('language', 'text')}\n{r['text']}\n```"
     for r in reranked])
     context = sanitize_context(context)
@@ -198,45 +225,47 @@ def answer_question_stream(
         history_text = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in chat_history[-4:]])
 
     system_prompt = build_safe_system_prompt()
-    prompt = f"""{system_prompt}
-
-Context:
+    user_prompt = f"""Context:
 {context}
 
 Chat History:
 {history_text}
 
-User Question: {query}
+User Question: {handle.resolved_question}
 """
 
-    # 5. Stream LLM response
-    api_key = os.getenv("GEMINI_API_KEY")
-    base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-    
-    if not api_key:
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        base_url = "https://openrouter.ai/api/v1"
-        model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
-        
-    handle.provider = "Gemini" if os.getenv("GEMINI_API_KEY") else "OpenRouter"
-    handle.model = model
+    # 6. Stream LLM response via the shared client: multi-provider failover
+    # (Gemini -> pinned OpenRouter model -> OpenRouter auto-router) with
+    # retry-with-backoff on transient errors, instead of a single direct call.
+    try:
+        llm_client = get_llm_client()
+    except Exception as exc:
+        err_msg = str(exc)
+        handle.error = err_msg
+
+        def no_provider_iter():
+            yield f"Error: {err_msg}"
+
+        return no_provider_iter(), handle
+
+    raw_token_iter, gen_handle = llm_client.generate_stream(
+        user_prompt=user_prompt,
+        system_prompt=system_prompt,
+    )
 
     def token_generator():
         try:
-            client = OpenAI(api_key=api_key, base_url=base_url)
-            stream = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-                temperature=0.2
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-        except Exception as exc:
-            handle.error = str(exc)
-            # Yield is safe here because it executes *during* the except block
-            yield f"\n\nError generating response: {str(exc)}"
+            yield from raw_token_iter
+        finally:
+            # gen_handle is only fully populated once raw_token_iter is
+            # exhausted, which has just happened via the yield from above --
+            # same "handle populated after generator exhausts" contract
+            # api/main.py already relies on for the outer `handle`.
+            if gen_handle.provider:
+                handle.provider = _PROVIDER_DISPLAY_NAMES.get(gen_handle.provider, gen_handle.provider)
+            if gen_handle.model:
+                handle.model = gen_handle.model
+            if gen_handle.error:
+                handle.error = gen_handle.error
 
     return token_generator(), handle
