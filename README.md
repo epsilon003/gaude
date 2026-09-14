@@ -90,31 +90,75 @@ The confidence badge (Strong / Moderate / Weak) is a heuristic, not a calibrated
 
 **Why relative, not absolute?** The cross-encoder (`ms-marco-MiniLM`) was trained on web search prose, not code. Its absolute scores for code run systematically lower. Comparing the top 5 against the bottom 10 *from the same retrieval call* sidesteps this: "meaningfully better than what got discarded" is a comparison against itself, not a number tuned for a different domain.
 
-**Calibration:** The `0.75` / `0.50` cutoffs are starting points. Use the included `python eval.py` script with a small golden dataset of your own Q&A pairs to tune these boundaries for your specific use cases.
+**Calibration:** The `0.75` / `0.50` cutoffs are starting points. Use `python -m rag_core.eval` with a small golden dataset of your own Q&A pairs to tune these boundaries for your specific use cases.
+
+## Testing
+
+### Unit tests (Python)
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+Covers chunking (file filtering, line-number resolution), the prompt-injection sanitizer, the repo-URL-to-collection-name slug, and the eval harness's own metric logic (hit-rate, MRR) via a stubbed retriever — no live vector store or model downloads required.
+
+### Retrieval eval harness (`rag_core/eval_harness.py`)
+Different from `rag_core/eval.py` (which calibrates the confidence *thresholds* on a couple of examples): this measures whether retrieval itself is any good — a change to chunking, embeddings, or reranking can quietly make context worse without anything crashing, and this is what catches that.
+
+```bash
+# Requires the gaude repo itself to already be ingested (ingest.py or the UI),
+# since eval/golden_dataset.json evaluates the pipeline against its own source.
+python -m rag_core.eval_harness
+
+# Point at a different dataset / top-k, or wire into CI:
+python -m rag_core.eval_harness --dataset eval/golden_dataset.json --top-k 3
+python -m rag_core.eval_harness --json report.json
+python -m rag_core.eval_harness --fail-under 0.8   # exit 1 if hit-rate drops below 80%
+```
+Reports hit-rate@k, MRR, and a per-query pass/fail with expected-vs-retrieved files.
+
+### E2E tests (frontend)
+```bash
+cd frontend
+npm install
+npx playwright install --with-deps chromium   # one-time browser download
+npm run test:e2e
+```
+Mocks the backend's `/api/repos` response via `page.route()`, so it exercises the connected/unreachable UI states without needing a live `uvicorn` process.
+
+## Known gaps
+
+- No root-level `LICENSE` file yet (README says MIT; add the actual file).
 
 ## Project Structure
 
 ```text
 .
-├── .env.example
+├── .env.example              # Copy to .env and fill in API keys
 ├── requirements.txt
-├── eval.py                  # Standalone script to calibrate confidence thresholds
-├── api/                     # FastAPI backend
-│   ├── main.py              # Endpoints: health, repos, ingest (+SSE), chat (SSE)
-│   ├── jobs.py              # In-memory background ingestion job tracking
-│   └── schemas.py           # Pydantic request models
-├── frontend/                # Next.js UI
-│   ├── app/                 # Layout, page, global styles
-│   ├── components/          # Sidebar, ChatPanel, MarkdownMessage, Badges, etc.
-│   └── lib/                 # api.ts (typed client + SSE parsing)
-└── rag_core/                # Shared business logic (used by BOTH api/ and CLI)
-    ├── chunking.py          # AST-aware (tree-sitter) splitting with LangChain fallback
-    ├── embeddings.py        # Local sentence-transformers wrapper (lazy-imported)
-    ├── vector_store.py      # ChromaDB wrapper: Hybrid search (BM25+RRF), metadata filtering
-    ├── reranker.py          # Local cross-encoder reranking (lazy-imported)
-    ├── llm_client.py        # Gemini + OpenRouter clients: streaming, retry/failover
-    ├── ingestion.py         # Orchestrates clone -> chunk -> embed -> store (with SHA skip logic)
-    └── retrieval.py         # Orchestrates routing -> multi-query expand -> retrieve -> rerank
+├── requirements-dev.txt      # pytest, for `pytest` / rag_core/eval_harness.py tests
+├── eval/
+│   └── golden_dataset.json   # Questions + expected source files, for rag_core/eval_harness.py
+├── tests/                    # pytest unit tests (chunking, sanitization, eval harness)
+├── api/                      # FastAPI backend
+│   ├── main.py               # Endpoints: health, repos, ingest (+SSE), chat (SSE)
+│   ├── jobs.py                # In-memory background ingestion job tracking
+│   └── schemas.py             # Pydantic request models
+├── frontend/                 # Next.js UI
+│   ├── app/                   # Layout, page, global styles
+│   ├── components/            # Sidebar, ChatPanel, MarkdownMessage, Badges, etc.
+│   ├── lib/                   # api.ts (typed client + SSE parsing)
+│   └── tests/e2e/              # Playwright E2E specs (npm run test:e2e)
+└── rag_core/                 # Shared business logic (used by BOTH api/ and CLI)
+    ├── chunking.py            # AST-aware (tree-sitter) splitting with LangChain fallback
+    ├── embeddings.py           # Local sentence-transformers wrapper (lazy-imported)
+    ├── vector_store.py         # ChromaDB wrapper: Hybrid search (BM25+RRF), metadata filtering
+    ├── reranker.py             # Local cross-encoder reranking (lazy-imported)
+    ├── llm_client.py           # Gemini + OpenRouter clients: streaming, retry/failover, follow-up condensing
+    ├── sanitization.py         # Prompt-injection defense for retrieved context
+    ├── ingestion.py            # Orchestrates clone -> chunk -> embed -> store (with SHA skip logic)
+    ├── retrieval.py            # Orchestrates routing -> multi-query expand -> retrieve -> rerank -> generate
+    ├── eval.py                 # Standalone script to calibrate confidence thresholds (`python -m rag_core.eval`)
+    └── eval_harness.py         # Retrieval quality eval: hit-rate/MRR against eval/golden_dataset.json
 ```
 
 ## Scope
