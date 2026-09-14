@@ -1,0 +1,6 @@
+# --- Python tests (tests/, rag_core/eval_harness.py) ---
+pytest>=8.0.0
+
+# --- Frontend E2E tests (frontend/tests/e2e/) ---
+# Installed via npm in frontend/, listed here just for visibility:
+#   cd frontend && npm install && npx playwright install --with-deps chromium
