@@ -11,6 +11,7 @@ import os
 import time
 from collections.abc import Iterator 
 from dataclasses import dataclass
+from functools import lru_cache
 
 from openai import OpenAI
 
@@ -237,6 +238,16 @@ class LLMClient:
             handle.error = "All configured LLM providers failed.\n" + "\n".join(errors)
 
         return _generator(), handle
+
+
+@lru_cache(maxsize=1)
+def get_llm_client() -> LLMClient:
+    """Cached singleton, same pattern as get_vector_store()/get_reranker().
+    Raises RuntimeError (uncached, per functools.lru_cache semantics) if no
+    provider is configured -- callers should catch that at the point where
+    a missing provider should actually surface as a user-facing error."""
+    return LLMClient()
+
 
 def build_context_block(chunks: list[dict]) -> str:
     """Turn retrieved/reranked chunks into a numbered context block for the prompt,
