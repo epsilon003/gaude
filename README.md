@@ -3,6 +3,7 @@
 Ask natural-language questions about a public GitHub repository and get streamed, grounded answers with clickable citations back to the exact lines they came from.
 
 **FastAPI + Next.js** (`api/` + `frontend/`) — the production path: a real REST/SSE API backend with a modern React frontend. Both work off the same shared `rag_core/` business logic, ensuring zero duplication and easy maintenance.
+![](assets/Capture.PNG)
 
 ## Stack
 
