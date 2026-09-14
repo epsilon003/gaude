@@ -4,17 +4,21 @@ Protects against prompt injection from ingested code/documentation.
 """
 import re
 
-# Common prompt injection patterns to strip from retrieved context
+# Common prompt injection patterns to strip from retrieved context.
+# The modifier group before "instructions/prompts/rules" uses * (zero or
+# more), not ? (zero or one) -- phrasings like "ignore all previous
+# instructions" stack two modifier words ("all" + "previous"), which a `?`
+# quantifier can only ever match one of, silently letting the line through.
 INJECTION_PATTERNS = [
-    r"ignore (all |previous |prior )?(instructions|prompts|rules)",
+    r"ignore (all |previous |prior )*(instructions|prompts|rules)",
     r"you are now",
-    r"disregard (all |previous |prior )?(instructions|prompts|rules)",
-    r"forget (all |previous |prior )?(instructions|prompts|rules)",
+    r"disregard (all |previous |prior )*(instructions|prompts|rules)",
+    r"forget (all |previous |prior )*(instructions|prompts|rules)",
     r"system prompt",
     r"act as (if |a |an )?",
     r"pretend (you are|to be)",
     r"new instructions",
-    r"override (all |previous |prior )?(instructions|prompts|rules)",
+    r"override (all |previous |prior )*(instructions|prompts|rules)",
     r"do not follow (your |the )?(instructions|rules)",
 ]
 
