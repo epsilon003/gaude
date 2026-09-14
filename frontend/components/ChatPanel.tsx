@@ -85,7 +85,14 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
                 model: evt.model,
                 confidence: evt.confidence,
                 confidenceLabel: evt.confidence_label,
-                resolvedQuestion: evt.resolved_question,
+                // Backend now only sets resolved_question when the LLM
+                // actually rewrote a follow-up into a standalone question;
+                // guard here too so "Interpreted as: ..." never shows the
+                // question back at the user unchanged.
+                resolvedQuestion:
+                  evt.resolved_question && evt.resolved_question !== question
+                    ? evt.resolved_question
+                    : undefined,
                 retrievalSeconds: evt.retrieval_seconds,
                 error: evt.error,
               };
