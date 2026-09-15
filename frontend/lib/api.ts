@@ -114,11 +114,16 @@ export async function* chatStream(
   collection: string,
   question: string,
   history: HistoryTurn[],
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ collection, question, history }),
+    // Without this the caller's AbortController has nothing to abort: the
+    // Stop button would flip the UI out of its streaming state while the
+    // request kept running and tokens kept arriving in the background.
+    signal,
   });
   if (!res.ok) {
     const detail = await res.text();
