@@ -30,7 +30,7 @@ def main():
     print(f"  Repo:        {summary['repo_url']}")
     print(f"  Collection:  {summary['collection_name']}")
     print(f"  Chunks:      {summary['chunk_count']}")
-    print("\nRun `streamlit run app.py` to ask questions about this repo.")
+    print("\nStart the backend with `uvicorn api.main:app --reload --port 8000`, then run the frontend with `npm run dev` in ./frontend to ask questions about this repo.")
 
 
 if __name__ == "__main__":
