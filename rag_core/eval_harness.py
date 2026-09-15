@@ -37,6 +37,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from rag_core.retrieval import retrieve_and_rerank
+from rag_core.vector_store import get_vector_store
 
 DEFAULT_DATASET_PATH = "eval/golden_dataset.json"
 DEFAULT_TOP_K_RETRIEVE = 15
@@ -77,19 +78,50 @@ def _first_hit_rank(retrieved_files: list[str], expected_files: list[str]) -> in
     return None
 
 
-def run_query(item: dict, top_k: int) -> QueryResult:
+def _existing_collection_names() -> set[str]:
+    """Collections that actually exist in the vector store right now. Used so
+    a dataset entry pointing at a collection_name that hasn't been ingested
+    (a typo, or the repo just hasn't been ingested yet) fails loudly with a
+    clear message instead of silently querying an empty auto-created
+    collection and reporting a confusing blanket 'got: []' miss on every
+    query (see VectorStore.get_or_create_collection)."""
+    try:
+        store = get_vector_store()
+        return {c.name for c in store.client.list_collections()}
+    except Exception:
+        # Fail open: if we can't even list collections, let the real
+        # retrieval call below surface whatever that actual error is.
+        return set()
+
+
+def run_query(item: dict, top_k: int, known_collections: set[str] | None = None) -> QueryResult:
     """Run a single eval case. Never raises -- a bad/missing collection for
     one question shouldn't abort the whole eval run, it should just show up
-    as an error in the report."""
+    as an error in the report.
+
+    known_collections is optional and defaults to skipping the existence
+    check entirely -- callers (like tests) that mock retrieve_and_rerank
+    directly don't need a real vector store just to call this function.
+    run_eval() below always passes it."""
+    collection_name = item["collection_name"]
     result = QueryResult(
         question=item["question"],
-        collection_name=item["collection_name"],
+        collection_name=collection_name,
         expected_files=list(item["expected_files"]),
     )
+
+    if known_collections is not None and collection_name not in known_collections:
+        available = ", ".join(sorted(known_collections)) or "(none -- nothing has been ingested yet)"
+        result.error = (
+            f"Collection '{collection_name}' has not been ingested. "
+            f"Ingested collections: {available}"
+        )
+        return result
+
     start = time.time()
     try:
         reranked = retrieve_and_rerank(
-            collection_name=item["collection_name"],
+            collection_name=collection_name,
             query=item["question"],
             top_k_retrieve=DEFAULT_TOP_K_RETRIEVE,
             top_k_final=top_k,
@@ -124,7 +156,8 @@ def summarize(results: list[QueryResult]) -> dict:
 def run_eval(dataset: list[dict], top_k: int = 5) -> tuple[list[QueryResult], dict]:
     """Reusable entry point -- also what tests call directly with a stubbed
     retrieve_and_rerank, without needing a live vector store."""
-    results = [run_query(item, top_k) for item in dataset]
+    known_collections = _existing_collection_names()
+    results = [run_query(item, top_k, known_collections=known_collections) for item in dataset]
     return results, summarize(results)
 
 
@@ -152,7 +185,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--top-k", type=int, default=5, help="Number of final reranked chunks checked for a hit.")
     parser.add_argument("--json", dest="json_out", default=None, help="Optional path to write a machine-readable report.")
     parser.add_argument("--fail-under", type=float, default=None, help="Exit 1 if hit_rate is below this (0-1), for CI.")
+    parser.add_argument("--list-collections", action="store_true", help="Print ingested collection names and exit.")
     args = parser.parse_args(argv)
+
+    if args.list_collections:
+        names = sorted(_existing_collection_names())
+        if names:
+            print("Ingested collections:")
+            for n in names:
+                print(f"  {n}")
+        else:
+            print("No collections have been ingested yet.")
+        return 0
 
     try:
         dataset = load_dataset(args.dataset)
