@@ -134,13 +134,61 @@ class TestSummarize:
         }
 
 
+class TestCollectionPreflight:
+    """The preflight exists because VectorStore.get_or_create_collection
+    auto-creates a missing collection rather than raising -- so without this
+    check, a typo'd or not-yet-ingested collection_name produces a silent
+    'got: []' miss on every single query, which looks like catastrophically
+    bad retrieval rather than a setup problem."""
+
+    def test_missing_collection_errors_with_the_available_names_listed(self):
+        item = {"question": "q", "collection_name": "typo-name", "expected_files": ["a.py"]}
+        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+            result = run_query(item, top_k=5, known_collections={"real-name", "other-name"})
+
+        assert result.hit is False
+        assert result.error is not None
+        assert "typo-name" in result.error
+        # The whole point: tell the user what they *could* have meant.
+        assert "real-name" in result.error and "other-name" in result.error
+        # And don't waste time querying a collection we know isn't there.
+        mock_retrieve.assert_not_called()
+
+    def test_empty_vector_store_says_nothing_has_been_ingested(self):
+        item = {"question": "q", "collection_name": "anything", "expected_files": ["a.py"]}
+        result = run_query(item, top_k=5, known_collections=set())
+        assert result.error is not None
+        assert "nothing has been ingested" in result.error
+
+    def test_existing_collection_passes_through_to_retrieval(self):
+        item = {"question": "q", "collection_name": "real-name", "expected_files": ["a.py"]}
+        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+            mock_retrieve.return_value = [_fake_result("a.py")]
+            result = run_query(item, top_k=5, known_collections={"real-name"})
+        assert result.hit is True
+        assert result.error is None
+
+    def test_omitting_known_collections_skips_the_check_entirely(self):
+        # Back-compat for direct callers that mock retrieval and have no
+        # real vector store to list collections from.
+        item = {"question": "q", "collection_name": "whatever", "expected_files": ["a.py"]}
+        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+            mock_retrieve.return_value = [_fake_result("a.py")]
+            result = run_query(item, top_k=5)
+        assert result.hit is True
+        assert result.error is None
+
+
 class TestRunEval:
     def test_run_eval_end_to_end_with_stubbed_retrieval(self):
         dataset = [
             {"question": "q1", "collection_name": "c", "expected_files": ["a.py"]},
             {"question": "q2", "collection_name": "c", "expected_files": ["z.py"]},
         ]
-        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+        with (
+            patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve,
+            patch("rag_core.eval_harness._existing_collection_names", return_value={"c"}),
+        ):
             mock_retrieve.return_value = [_fake_result("a.py")]
             results, metrics = run_eval(dataset, top_k=5)
         assert len(results) == 2
@@ -153,7 +201,10 @@ class TestMainCLI:
         p = tmp_path / "ds.json"
         p.write_text(json.dumps(dataset))
 
-        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+        with (
+            patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve,
+            patch("rag_core.eval_harness._existing_collection_names", return_value={"c"}),
+        ):
             mock_retrieve.return_value = [_fake_result("unrelated.py")]  # guaranteed miss
             exit_code = main(["--dataset", str(p), "--fail-under", "0.5"])
         assert exit_code == 1
@@ -168,7 +219,10 @@ class TestMainCLI:
         ds_path.write_text(json.dumps(dataset))
         out_path = tmp_path / "report.json"
 
-        with patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve:
+        with (
+            patch("rag_core.eval_harness.retrieve_and_rerank") as mock_retrieve,
+            patch("rag_core.eval_harness._existing_collection_names", return_value={"c"}),
+        ):
             mock_retrieve.return_value = [_fake_result("a.py")]
             main(["--dataset", str(ds_path), "--json", str(out_path)])
 
