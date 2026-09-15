@@ -8,9 +8,11 @@ torchvision>=0.19.0
 openai>=1.40.0
 
 # --- App / infra ---
-streamlit>=1.37.0
+# The Streamlit UI was replaced by the Next.js frontend + FastAPI backend;
+# uvicorn is what actually serves api.main:app (see README setup).
 python-dotenv>=1.0.1
 fastapi
+uvicorn[standard]>=0.30.0
 
 # --- CLI ingestion / utils ---
 tqdm>=4.66.0
