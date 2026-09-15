@@ -126,6 +126,16 @@ npm run test:e2e
 ```
 Mocks the backend's `/api/repos` response via `page.route()`, so it exercises the connected/unreachable UI states without needing a live `uvicorn` process.
 
+## CI/CD
+ 
+Two GitHub Actions workflows in `.github/workflows/`:
+ 
+**`ci.yml`** — runs on every push and PR:
+- `python-tests` — pytest. Installs only the lightweight deps (no torch/sentence-transformers), since every model-loading boundary in `tests/` is mocked. Runs in seconds.
+- `frontend` — `npm run lint` and `npm run build` (the build runs type checking too, and catches build-time failures a bare `tsc --noEmit` misses).
+- `e2e` — Playwright against a Next.js dev server, with the backend mocked via `page.route()`. Browser binary is cached; the HTML report uploads as an artifact.
+**`eval.yml`** — retrieval quality gate. Kept separate because it installs torch and downloads model weights (several minutes). Runs weekly, on manual dispatch, and on PRs that touch chunking/embeddings/reranking/retrieval/vector_store or the golden dataset. Ingests this repo, runs the harness, and fails if hit-rate drops below `--fail-under` (default 0.75). Needs no API keys — embedding and reranking are entirely local, and the harness never calls the generation LLM.
+
 ## Project Structure
 
 ```text
