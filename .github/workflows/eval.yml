@@ -60,7 +60,7 @@ jobs:
       # own source, so ingest it first. The harness measures retrieval
       # against whatever is already in the vector store; it doesn't ingest.
       - name: Ingest this repository
-        run: python ingest.py https://github.com/${{ github.repository }}
+        run: python ingest.py --repo_url "https://github.com/${{ github.repository }}"
 
       - name: Run retrieval eval
         run: |
