@@ -3,30 +3,62 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { chatStream, type HistoryTurn } from "@/lib/api";
 import { ChatMessage, type DisplayMessage } from "./ChatMessage";
+import { useChatSessions } from "@/hooks/useChatSessions";
+import { useStickyScroll } from "@/hooks/useStickyScroll";
 
+// Deliberately repo-agnostic. The previous set included "How is
+// authentication handled?", which is a dead end for the majority of
+// repositories and makes the tool look like it assumes a web app.
 const SUGGESTIONS = [
   "What does this repo do, at a high level?",
-  "Where is the main entry point?",
-  "How is authentication handled?",
+  "What are the main modules and how do they fit together?",
+  "How do I run this locally?",
 ];
+
+let messageIdCounter = 0;
+function nextMessageId() {
+  return `m${messageIdCounter++}`;
+}
 
 interface ChatPanelProps {
   selectedCollection: string | null;
   repoDisplayName: string | null;
   hasRepos: boolean;
+  onNotify?: (message: string, type: "success" | "error" | "info") => void;
 }
 
-export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: ChatPanelProps) {
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+export function ChatPanel({
+  selectedCollection,
+  repoDisplayName,
+  hasRepos,
+  onNotify,
+}: ChatPanelProps) {
+  // Message state is keyed by collection, so switching repos can never leak
+  // one repo's turns into another repo's `history`.
+  const { messages, setMessages, clearMessages } = useChatSessions(selectedCollection);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const { containerRef, bottomRef, isPinned, handleScroll, scrollToBottom } =
+    useStickyScroll(messages);
+
+  // Cancel any in-flight generation when the user switches repos -- its
+  // tokens would otherwise land in the newly-selected repo's session.
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [selectedCollection]);
+
+  // Auto-grow the textarea up to a cap, then scroll internally.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
 
   // Cmd/Ctrl+K focuses the question input; Escape stops an in-flight
   // generation. No command palette here — this app has nothing meaningful
@@ -61,7 +93,10 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
       abortRef.current = controller;
 
       setBusy(true);
-      setMessages((prev) => [...prev, { role: "assistant", content: "", streaming: true }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMessageId(), role: "assistant", content: "", streaming: true },
+      ]);
 
       try {
         let accumulated = "";
@@ -77,6 +112,7 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
             setMessages((prev) => {
               const next = [...prev];
               next[next.length - 1] = {
+                ...next[next.length - 1],
                 role: "assistant",
                 content: accumulated,
                 streaming: false,
@@ -98,38 +134,60 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
               };
               return next;
             });
+            if (evt.error) onNotify?.(evt.error, "error");
           }
         }
       } catch (err) {
         const isAbort = err instanceof DOMException && err.name === "AbortError";
+        const errorText = isAbort
+          ? undefined
+          : err instanceof Error
+          ? err.message
+          : String(err);
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
+            ...next[next.length - 1],
             role: "assistant",
             content: next[next.length - 1]?.content || "",
             streaming: false,
             stopped: isAbort,
-            error: isAbort ? undefined : err instanceof Error ? err.message : String(err),
+            error: errorText,
           };
           return next;
         });
+        if (errorText) onNotify?.(errorText, "error");
       } finally {
         setBusy(false);
         abortRef.current = null;
       }
     },
-    [selectedCollection, busy, messages],
+    [selectedCollection, busy, messages, setMessages, onNotify],
   );
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function submitQuestion() {
     const question = input.trim();
     if (!question || !selectedCollection || busy) return;
 
     setInput("");
     const historySnapshot = messages;
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
-    await runQuestion(question, historySnapshot);
+    setMessages((prev) => [...prev, { id: nextMessageId(), role: "user", content: question }]);
+    scrollToBottom("auto");
+    runQuestion(question, historySnapshot);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitQuestion();
+  }
+
+  // Enter sends, Shift+Enter inserts a newline -- the convention people
+  // already expect from every other chat surface.
+  function handleInputKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitQuestion();
+    }
   }
 
   function handleStop() {
@@ -154,8 +212,25 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+    <div className="flex flex-col flex-1 min-h-0 relative">
+      {messages.length > 0 && (
+        <div className="flex justify-end px-4 md:px-8 pt-3">
+          <button
+            type="button"
+            onClick={clearMessages}
+            disabled={busy}
+            className="text-xs text-muted hover:text-ink disabled:opacity-40 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 px-1.5 py-0.5"
+          >
+            Clear conversation
+          </button>
+        </div>
+      )}
+
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 md:px-8 py-6"
+      >
         {messages.length === 0 && (
           <div className="mb-4">
             <EmptyState
@@ -167,8 +242,11 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
                 <button
                   key={s}
                   type="button"
-                  onClick={() => setInput(s)}
-                  className="inline-block bg-card border border-hairline rounded-lg px-3 py-1.5 m-1 text-sm text-ink/85 hover:bg-card-hover hover:border-accent/40 transition-colors"
+                  onClick={() => {
+                    setInput(s);
+                    inputRef.current?.focus();
+                  }}
+                  className="inline-block bg-card border border-hairline rounded-lg px-3 py-1.5 m-1 text-sm text-ink/85 hover:bg-card-hover hover:border-accent/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
                   {s}
                 </button>
@@ -180,52 +258,83 @@ export function ChatPanel({ selectedCollection, repoDisplayName, hasRepos }: Cha
         <div className="max-w-3xl mx-auto w-full">
           {messages.map((m, i) => (
             <ChatMessage
-              key={i}
+              key={m.id ?? i}
               message={m}
               onRetry={m.role === "assistant" && m.error ? () => handleRetry(i) : undefined}
             />
           ))}
-          <div ref={scrollRef} />
+          <div ref={bottomRef} />
         </div>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="border-t border-hairline p-4 flex gap-2 max-w-3xl mx-auto w-full"
-      >
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question about the selected repo... (Ctrl/Cmd+K to focus)"
-          disabled={busy || !selectedCollection}
-          className="flex-1 bg-card border border-hairline rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow"
-        />
-        {busy ? (
-          <button
-            type="button"
-            onClick={handleStop}
-            className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light transition-colors flex items-center gap-1.5"
-            title="Stop generating (Esc)"
-          >
-            Stop
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="6" y="6" width="12" height="12" rx="1.5" />
-            </svg>
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!selectedCollection || !input.trim()}
-            className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors flex items-center gap-1.5"
-          >
-            Send
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
-          </button>
-        )}
+      {/* Only offered once the user has actually scrolled away, so it never
+          covers content during normal top-to-bottom reading. */}
+      {!isPinned && messages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom()}
+          className="absolute bottom-24 left-1/2 -translate-x-1/2 elevated bg-card border border-hairline text-ink text-xs rounded-full px-3 py-1.5 flex items-center gap-1.5 hover:bg-card-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
+          Jump to latest
+        </button>
+      )}
+
+      <form onSubmit={handleSubmit} className="border-t border-hairline p-4 max-w-3xl mx-auto w-full">
+        <div className="flex gap-2 items-end">
+          <label htmlFor="question-input" className="sr-only">
+            Ask a question about the selected repository
+          </label>
+          <textarea
+            id="question-input"
+            ref={inputRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleInputKeyDown}
+            placeholder="Ask a question about the selected repo..."
+            disabled={busy || !selectedCollection}
+            className="flex-1 resize-none bg-card border border-hairline rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60 transition-shadow leading-relaxed"
+          />
+          {busy ? (
+            <button
+              type="button"
+              onClick={handleStop}
+              className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light transition-colors flex items-center gap-1.5 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              title="Stop generating (Esc)"
+            >
+              Stop
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!selectedCollection || !input.trim()}
+              className="bg-navy text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light disabled:opacity-50 transition-colors flex items-center gap-1.5 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              Send
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          )}
+        </div>
+        {/* The Esc-to-stop shortcut existed but was undiscoverable. */}
+        <div className="text-[0.7rem] text-muted mt-1.5 hidden md:block">
+          <kbd className="font-mono">Enter</kbd> to send ·{" "}
+          <kbd className="font-mono">Shift+Enter</kbd> for a new line ·{" "}
+          <kbd className="font-mono">Ctrl/Cmd+K</kbd> to focus
+          {busy && (
+            <>
+              {" "}
+              · <kbd className="font-mono">Esc</kbd> to stop
+            </>
+          )}
+        </div>
       </form>
     </div>
   );
