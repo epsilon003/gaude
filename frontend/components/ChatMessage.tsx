@@ -9,6 +9,10 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import type { Citation } from "@/lib/api";
 
 export interface DisplayMessage {
+  /** Stable identity for React keys. Index keys broke reconciliation when
+   *  retry rewrote the tail of the array via slice(). Optional so older
+   *  persisted sessions without ids still render. */
+  id?: string;
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
@@ -42,6 +46,7 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
   }
 
   const hasCitations = !!message.citations?.length;
+  const distinctFiles = Array.from(new Set((message.citations ?? []).map((c) => c.file_path)));
   const isThinking = !!message.streaming && message.content.length === 0;
   const showCopy = !message.streaming && message.content.length > 0;
 
@@ -69,7 +74,7 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
               <button
                 type="button"
                 onClick={onRetry}
-                className="text-xs font-semibold text-accent hover:underline shrink-0"
+                className="text-xs font-semibold text-accent hover:underline shrink-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
               >
                 Retry
               </button>
@@ -101,10 +106,27 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
               </div>
             )}
 
+            {/* The grounding is the product here -- previously you had to
+                expand Sources and then expand each citation individually just
+                to learn which files an answer rested on. This surfaces the
+                distinct files at a glance. */}
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {distinctFiles.map((f) => (
+                <span
+                  key={f}
+                  title={f}
+                  className="font-mono text-[0.68rem] bg-canvas border border-hairline rounded px-1.5 py-0.5 text-muted max-w-[14rem] truncate"
+                >
+                  {f.split("/").pop()}
+                </span>
+              ))}
+            </div>
+
             <button
               type="button"
               onClick={() => setSourcesOpen((o) => !o)}
-              className="w-full flex items-center gap-1.5 text-muted text-xs hover:text-ink transition-colors py-1"
+              aria-expanded={sourcesOpen}
+              className="w-full flex items-center gap-1.5 text-muted text-xs hover:text-ink transition-colors py-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             >
               <svg
                 width="10"
