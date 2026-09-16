@@ -61,7 +61,8 @@ test.describe("backend reachable", () => {
     await expect(page.getByRole("heading", { name: /can.t reach the server/i })).not.toBeVisible();
 
     // The ingested repo's URL should surface somewhere in the sidebar.
-    await expect(page.getByText("https://github.com/epsilon003/gaude")).toBeVisible();
+    // The sidebar renders the short owner/repo form, not the raw URL.
+    await expect(page.getByText("epsilon003/gaude")).toBeVisible();
   });
 
   test("has no unhandled console errors on initial load", async ({ page }) => {
