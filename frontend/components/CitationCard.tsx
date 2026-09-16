@@ -6,8 +6,7 @@ import { oneLight, oneDark } from "react-syntax-highlighter/dist/esm/styles/pris
 import type { Citation } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 
-// Mirrors app.py's _LANGUAGE_MAP so citation previews highlight the same way
-// the Streamlit UI does.
+// Extension -> Prism language id for citation syntax highlighting.
 const LANGUAGE_MAP: Record<string, string> = {
   ".py": "python",
   ".js": "javascript",
@@ -55,7 +54,8 @@ export function CitationCard({ citation }: { citation: Citation }) {
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-card-hover transition-colors"
+        aria-expanded={expanded}
+        className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-card-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/50"
       >
         <span className="font-mono text-ink flex items-center gap-1.5">
           <svg
@@ -82,7 +82,7 @@ export function CitationCard({ citation }: { citation: Citation }) {
               href={citation.github_url}
               target="_blank"
               rel="noreferrer"
-              className="inline-block text-xs text-accent hover:underline mb-2"
+              className="inline-block text-xs text-accent hover:underline mb-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             >
               View on GitHub
             </a>
