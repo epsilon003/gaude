@@ -9,7 +9,7 @@ interface ToastProps {
   onClose: () => void;
 }
 
-export function Toast({ message, type = "info", duration = 3000, onClose }: ToastProps) {
+export function Toast({ message, type = "info", duration = 4000, onClose }: ToastProps) {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
@@ -22,15 +22,19 @@ export function Toast({ message, type = "info", duration = 3000, onClose }: Toas
     return () => clearTimeout(timer);
   }, [duration, onClose]);
 
-  const bgColor = {
-    success: "bg-green-600",
-    error: "bg-red-600",
-    info: "bg-blue-600",
+  const accent = {
+    success: "border-l-confidence-strong",
+    error: "border-l-confidence-weak",
+    info: "border-l-accent",
   }[type];
 
   return (
     <div
-      className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white transition-all duration-300 ${bgColor} ${
+      // role=status + aria-live so errors that only ever appeared as a toast
+      // are announced rather than silently flashing past screen-reader users.
+      role="status"
+      aria-live="polite"
+      className={`elevated pointer-events-auto bg-card text-ink border border-hairline border-l-4 ${accent} px-4 py-3 rounded-lg shadow-lg text-sm max-w-sm transition-all duration-300 ${
         isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
       }`}
     >
