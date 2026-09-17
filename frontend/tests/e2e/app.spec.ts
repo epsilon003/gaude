@@ -60,9 +60,12 @@ test.describe("backend reachable", () => {
     // The dead-server screen should not be showing when the backend responds.
     await expect(page.getByRole("heading", { name: /can.t reach the server/i })).not.toBeVisible();
 
-    // The ingested repo's URL should surface somewhere in the sidebar.
-    // The sidebar renders the short owner/repo form, not the raw URL.
-    await expect(page.getByText("epsilon003/gaude")).toBeVisible();
+    // The ingested repo should be selectable in the sidebar, shown as
+    // owner/repo. Scoped to the repo-picker button specifically -- the
+    // mobile header and the empty-state heading also render this text
+    // (hidden responsively via CSS, not removed from the DOM), so a plain
+    // getByText matches three elements and trips Playwright's strict mode.
+    await expect(page.getByRole("button", { name: /epsilon003\/gaude/ })).toBeVisible();
   });
 
   test("has no unhandled console errors on initial load", async ({ page }) => {
