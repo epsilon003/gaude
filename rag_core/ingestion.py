@@ -24,7 +24,7 @@ def iter_ingestible_files(root_dir: str):
     for dirpath, _, filenames in os.walk(root_dir):
         for fname in filenames:
             full_path = os.path.join(dirpath, fname)
-            rel_path = os.path.relpath(full_path, root_dir)
+            rel_path = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
             if not should_ingest_file(rel_path): continue
             try:
                 if os.path.getsize(full_path) > MAX_FILE_SIZE_BYTES: continue
